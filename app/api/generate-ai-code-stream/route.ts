@@ -5,6 +5,68 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
+import fs from 'fs';
+import path from 'path';
+
+function getCustomSystemPromptAndSkills(prompt: string): string {
+  let customInstructions = '';
+  
+  try {
+    // 1. Read AGENTS.md (Layer A Core Prompt)
+    const agentsPath = path.resolve(process.cwd(), 'AGENTS.md');
+    if (fs.existsSync(agentsPath)) {
+      const agentsContent = fs.readFileSync(agentsPath, 'utf8');
+      customInstructions += `\n\n=== AGENTS.md CORE SYSTEM RULES ===\n${agentsContent}\n`;
+    }
+    
+    // 2. Determine and load matching skills (Layer B)
+    const promptLower = (prompt || '').toLowerCase();
+    const skillsToLoad = ['design-core', 'design-intelligence']; // always load core design
+    
+    if (promptLower.includes('http') || promptLower.includes('www.') || promptLower.includes('clone') || promptLower.includes('reproduce') || promptLower.includes('kopyala') || promptLower.includes('klonla') || promptLower.includes('aynısını')) {
+      skillsToLoad.push('clone-fidelity');
+    }
+    if (promptLower.includes('brand') || promptLower.includes('style') || promptLower.includes('marka') || promptLower.includes('stil') || promptLower.includes('tema')) {
+      skillsToLoad.push('brand-extract');
+    }
+    if (promptLower.includes('button') || promptLower.includes('input') || promptLower.includes('component') || promptLower.includes('tek bir') || promptLower.includes('bileşen') || promptLower.includes('öğe')) {
+      skillsToLoad.push('component-scope');
+    }
+    if (promptLower.includes('error') || promptLower.includes('bug') || promptLower.includes('hata') || promptLower.includes('fail') || promptLower.includes('derleme') || promptLower.includes('bozuk')) {
+      skillsToLoad.push('auto-debug');
+    }
+    if (promptLower.includes('visual') || promptLower.includes('görsel') || promptLower.includes('like') || promptLower.includes('bunun gibi') || promptLower.includes('resim')) {
+      skillsToLoad.push('design-study');
+    }
+    
+    // Load skills from .agents/skills
+    for (const skill of skillsToLoad) {
+      const skillPath = path.resolve(process.cwd(), `.agents/skills/${skill}/SKILL.md`);
+      if (fs.existsSync(skillPath)) {
+        const skillContent = fs.readFileSync(skillPath, 'utf8');
+        customInstructions += `\n\n=== LAYER B SKILL: ${skill.toUpperCase()} ===\n${skillContent}\n`;
+        
+        // Also load any json resource inside the skill folder
+        const jsonResource = path.resolve(process.cwd(), `.agents/skills/${skill}/design-intelligence.json`);
+        if (fs.existsSync(jsonResource)) {
+          const jsonContent = fs.readFileSync(jsonResource, 'utf8');
+          customInstructions += `\n=== ${skill.toUpperCase()} RESOURCE (design-intelligence.json) ===\n${jsonContent}\n`;
+        }
+        
+        // Also load any markdown resource
+        const mdResource = path.resolve(process.cwd(), `.agents/skills/${skill}/edit-examples.md`);
+        if (fs.existsSync(mdResource)) {
+          const mdContent = fs.readFileSync(mdResource, 'utf8');
+          customInstructions += `\n=== ${skill.toUpperCase()} RESOURCE (edit-examples.md) ===\n${mdContent}\n`;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error loading custom system prompt or skills:", err);
+  }
+  
+  return customInstructions;
+}
 import { selectFilesForEdit, getFileContents, formatFilesForAI } from '@/lib/context-selector';
 import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@/lib/file-search-executor';
 import { FileManifest } from '@/types/file-manifest';
@@ -640,6 +702,7 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
         // Build system prompt with conversation awareness
         let systemPrompt = `You are an expert React developer with perfect memory of the conversation. You maintain context across messages and remember scraped websites, generated components, and applied code. Generate clean, modern React code for Vite applications.
 ${conversationContext}
+${getCustomSystemPromptAndSkills(prompt)}
 
 🚨 CRITICAL RULES - YOUR MOST IMPORTANT INSTRUCTIONS:
 1. **DO EXACTLY WHAT IS ASKED - NOTHING MORE, NOTHING LESS**

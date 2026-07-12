@@ -6,8 +6,6 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import FirecrawlIcon from "@/components/shared/firecrawl-icon/firecrawl-icon";
-import Logo from "@/components/shared/header/_svg/Logo";
 import { useHeaderContext } from "@/components/shared/header/HeaderContext";
 import { cn } from "@/utils/cn";
 
@@ -34,7 +32,7 @@ export default function HeaderBrandKit() {
   return (
     <div className="relative">
       <Link
-        className="flex items-center gap-2 relative brand-kit-menu"
+        className="flex items-center gap-1.5 relative brand-kit-menu select-none"
         href="/"
         onContextMenu={(e) => {
           e.preventDefault();
@@ -45,8 +43,12 @@ export default function HeaderBrandKit() {
           }
         }}
       >
-        <FirecrawlIcon className="size-28 -top-2 relative" />
-        <Logo />
+        <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-orange-600 to-amber-500 flex items-center justify-center font-bold text-white shadow-md shadow-orange-600/25 text-sm font-sans flex-shrink-0">
+          G
+        </div>
+        <span className="text-sm font-extrabold tracking-tight text-neutral-800 dark:text-neutral-100 font-sans ml-1">
+          G Studio
+        </span>
       </Link>
 
       <AnimatePresence initial={false} mode="popLayout">

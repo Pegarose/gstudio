@@ -559,6 +559,24 @@ function AISandboxPage() {
       return [...prev, { content, type, timestamp: new Date(), metadata }];
     });
   };
+
+  const appendTokensToLastAiMessage = (text: string) => {
+    setChatMessages(prev => {
+      if (prev.length === 0) {
+        return [{ content: text, type: 'ai', timestamp: new Date() }];
+      }
+      const last = prev[prev.length - 1];
+      if (last.type === 'ai') {
+        const newContent = last.content === 'Thinking...' ? text : last.content + text;
+        return [
+          ...prev.slice(0, -1),
+          { ...last, content: newContent }
+        ];
+      } else {
+        return [...prev, { content: text, type: 'ai', timestamp: new Date() }];
+      }
+    });
+  };
   
   const checkAndInstallPackages = async () => {
     // This function is only called when user explicitly requests it
@@ -2181,6 +2199,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         ? `${message}\n\nIMPORTANT: Do NOT perform any code edits or file writes. Only provide a detailed structural plan of the requested changes and ask for my confirmation before modifying any files.`
         : message;
 
+      addChatMessage('Thinking...', 'ai');
+
       // Abort any active generation stream
       if (activeGenerationStreamRef.current) {
         activeGenerationStreamRef.current.abort();
@@ -2256,8 +2276,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   // Filter out any XML tags and file content that slipped through
                   if (!text.includes('<file') && !text.includes('import React') && 
                       !text.includes('export default') && !text.includes('className=') &&
-                      text.trim().length > 0) {
-                    addChatMessage(text.trim(), 'ai');
+                      text.length > 0) {
+                    explanation += text;
+                    appendTokensToLastAiMessage(text);
                   }
                 } else if (data.type === 'stream' && data.raw) {
                   setGenerationProgress(prev => {
@@ -2446,29 +2467,34 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       if (generatedCode) {
         // Parse files from generated code for metadata
         const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
-        const generatedFiles = [];
+        const generatedFiles: string[] = [];
         let match;
         while ((match = fileRegex.exec(generatedCode)) !== null) {
           generatedFiles.push(match[1]);
         }
         
-        // Show appropriate message based on edit mode
-        if (isEdit && generatedFiles.length > 0) {
-          // For edits, show which file(s) were edited
-          const editedFileNames = generatedFiles.map(f => f.split('/').pop()).join(', ');
-          addChatMessage(
-            explanation || `Updated ${editedFileNames}`,
-            'ai',
-            {
-              appliedFiles: [generatedFiles[0]] // Only show the first edited file
+        // Update the last AI message with the final explanation and metadata
+        setChatMessages(prev => {
+          if (prev.length === 0) return prev;
+          const newMessages = [...prev];
+          for (let i = newMessages.length - 1; i >= 0; i--) {
+            if (newMessages[i].type === 'ai') {
+              const defaultText = isEdit && generatedFiles.length > 0
+                ? `Updated ${generatedFiles.map(f => f.split('/').pop()).join(', ')}`
+                : 'Code generated!';
+              newMessages[i] = {
+                ...newMessages[i],
+                content: explanation || newMessages[i].content || defaultText,
+                metadata: {
+                  ...newMessages[i].metadata,
+                  appliedFiles: isEdit && generatedFiles.length > 0 ? [generatedFiles[0]] : generatedFiles
+                }
+              };
+              break;
             }
-          );
-        } else {
-          // For new generation, show all files
-          addChatMessage(explanation || 'Code generated!', 'ai', {
-            appliedFiles: generatedFiles
-          });
-        }
+          }
+          return newMessages;
+        });
         
         setPromptInput(generatedCode);
         // Don't show the Generated Code panel by default
@@ -3447,6 +3473,7 @@ Focus on the key sections and content, making it clean and modern.`;
         }
         const abortController = new AbortController();
         activeGenerationStreamRef.current = abortController;
+        addChatMessage('Thinking...', 'ai');
 
         const aiResponse = await fetch('/api/generate-ai-code-stream', {
           method: 'POST',
@@ -3466,56 +3493,64 @@ Focus on the key sections and content, making it clean and modern.`;
           })
         });
         
-        if (!aiResponse.ok || !aiResponse.body) {
-          throw new Error('Failed to generate code');
+        if (!aiResponse.ok) {
+          throw new Error(`HTTP error! status: ${aiResponse.status}`);
         }
         
-        const reader = aiResponse.body.getReader();
+        const reader = aiResponse.body?.getReader();
         const decoder = new TextDecoder();
         let generatedCode = '';
         let explanation = '';
+        let buffer = ''; // Buffer for incomplete lines
         
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'status') {
-                  setGenerationProgress(prev => ({ ...prev, status: data.message }));
-                } else if (data.type === 'thinking') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: true,
-                    thinkingText: (prev.thinkingText || '') + data.text
-                  }));
-                } else if (data.type === 'thinking_complete') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: false,
-                    thinkingDuration: data.duration
-                  }));
-                } else if (data.type === 'conversation') {
-                  // Add conversational text to chat only if it's not code
-                  let text = data.text || '';
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            console.log('[startGeneration] Received chunk:', chunk.length, 'bytes');
+            buffer += chunk;
+            const lines = buffer.split('\n');
+            
+            // Keep the last line in buffer if it's incomplete
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
                   
-                  // Remove package tags from the text
-                  text = text.replace(/<package>[^<]*<\/package>/g, '');
-                  text = text.replace(/<packages>[^<]*<\/packages>/g, '');
-                  
-                  // Filter out any XML tags and file content that slipped through
-                  if (!text.includes('<file') && !text.includes('import React') && 
-                      !text.includes('export default') && !text.includes('className=') &&
-                      text.trim().length > 0) {
-                    addChatMessage(text.trim(), 'ai');
-                  }
-                } else if (data.type === 'stream' && data.raw) {
+                  if (data.type === 'status') {
+                    setGenerationProgress(prev => ({ ...prev, status: data.message }));
+                  } else if (data.type === 'thinking') {
+                    setGenerationProgress(prev => ({ 
+                      ...prev, 
+                      isThinking: true,
+                      thinkingText: (prev.thinkingText || '') + data.text
+                    }));
+                  } else if (data.type === 'thinking_complete') {
+                    setGenerationProgress(prev => ({ 
+                      ...prev, 
+                      isThinking: false,
+                      thinkingDuration: data.duration
+                    }));
+                  } else if (data.type === 'conversation') {
+                    // Add conversational text to chat only if it's not code
+                    let text = data.text || '';
+                    
+                    // Remove package tags from the text
+                    text = text.replace(/<package>[^<]*<\/package>/g, '');
+                    text = text.replace(/<packages>[^<]*<\/packages>/g, '');
+                    
+                    // Filter out any XML tags and file content that slipped through
+                    if (!text.includes('<file') && !text.includes('import React') && 
+                        !text.includes('export default') && !text.includes('className=') &&
+                        text.length > 0) {
+                      explanation += text;
+                      appendTokensToLastAiMessage(text);
+                    }
+                  } else if (data.type === 'stream' && data.raw) {
                   setGenerationProgress(prev => {
                     const newStreamedCode = prev.streamedCode + data.text;
                     
@@ -3626,6 +3661,7 @@ Focus on the key sections and content, making it clean and modern.`;
             }
           }
         }
+      }
         
         setGenerationProgress(prev => ({
           ...prev,
@@ -3637,27 +3673,35 @@ Focus on the key sections and content, making it clean and modern.`;
         if (generatedCode) {
           addChatMessage('AI recreation generated!', 'system');
           
-          // Add the explanation to chat if available
-          if (explanation && explanation.trim()) {
-            addChatMessage(explanation, 'ai');
-          }
-          
           setPromptInput(generatedCode);
 
           // Apply the code (first time is not edit mode)
           await applyGeneratedCode(generatedCode, false);
 
-          addChatMessage(
-            brandExtensionMode
-              ? `Successfully built your custom component using ${cleanUrl}'s brand guidelines! You can now ask me to modify it or add more features.`
-              : `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`,
-            'ai',
-            {
-              scrapedUrl: url,
-              scrapedContent: brandExtensionMode ? { brandGuidelines } : scrapeData,
-              generatedCode: generatedCode
+          const successContent = brandExtensionMode
+            ? `Successfully built your custom component using ${cleanUrl}'s brand guidelines! You can now ask me to modify it or add more features.`
+            : `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`;
+
+          setChatMessages(prev => {
+            if (prev.length === 0) return prev;
+            const newMessages = [...prev];
+            for (let i = newMessages.length - 1; i >= 0; i--) {
+              if (newMessages[i].type === 'ai') {
+                newMessages[i] = {
+                  ...newMessages[i],
+                  content: explanation || successContent,
+                  metadata: {
+                    ...newMessages[i].metadata,
+                    scrapedUrl: url,
+                    scrapedContent: brandExtensionMode ? { brandGuidelines } : scrapeData,
+                    generatedCode: generatedCode
+                  }
+                };
+                break;
+              }
             }
-          );
+            return newMessages;
+          });
           
           setConversationContext(prev => ({
             ...prev,
@@ -3945,7 +3989,7 @@ Focus on the key sections and content, making it clean and modern.`;
           {conversationContext.scrapedWebsites.length > 0 && (
             <div className="p-4 bg-card border-b border-gray-200">
               <div className="flex flex-col gap-4">
-                {conversationContext.scrapedWebsites.map((site, idx) => {
+                {Array.from(new Map(conversationContext.scrapedWebsites.map(s => [s.url, s])).values()).map((site, idx) => {
                   // Extract favicon and site info from the scraped data
                   const metadata = site.content?.metadata || {};
                   const sourceURL = metadata.sourceURL || site.url;
@@ -4587,26 +4631,67 @@ Focus on the key sections and content, making it clean and modern.`;
               </button>
             </div>
 
-            <div className="flex items-center gap-8">
-              <div className="flex-1">
-                <HeroInput
-                  value={aiChatInput}
-                  onChange={setAiChatInput}
-                  onSubmit={sendChatMessage}
-                  placeholder={generationMode === 'build' ? "Describe what you want to build..." : "Discuss the plan before building..."}
-                  showSearchFeatures={false}
-                />
-              </div>
-              <div className="flex flex-col gap-4 pr-4">
-                <span className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Mode</span>
-                <select
-                  value={generationMode}
-                  onChange={(e) => setGenerationMode(e.target.value as 'build' | 'plan')}
-                  className="bg-white border border-gray-200 text-gray-700 text-[10px] font-bold rounded-8 px-8 py-6 focus:outline-none cursor-pointer shadow-sm hover:bg-gray-50 transition-all"
+            <div className="relative bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-orange-500/20 focus-within:border-orange-500 transition-all p-3">
+              <textarea
+                value={aiChatInput}
+                onChange={(e) => {
+                  setAiChatInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = e.target.scrollHeight + 'px';
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChatMessage();
+                  }
+                }}
+                placeholder={generationMode === 'build' ? "Describe what you want to build..." : "Discuss the plan before building..."}
+                rows={1}
+                className="w-full bg-transparent text-sm text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 resize-none outline-none border-none focus:ring-0 max-h-[160px] min-h-[24px]"
+                style={{ height: 'auto', overflowY: 'auto' }}
+              />
+              <div className="flex items-center justify-between mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800/80">
+                <div className="flex items-center gap-8">
+                  <span className="text-[10px] font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-wider select-none">Mode:</span>
+                  <div className="inline-flex bg-neutral-100 dark:bg-neutral-800 rounded-lg p-0.5 border border-neutral-200/50 dark:border-neutral-700/50">
+                    <button
+                      type="button"
+                      onClick={() => setGenerationMode('build')}
+                      className={`px-8 py-3 rounded-md text-[10px] font-bold transition-all ${
+                        generationMode === 'build'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
+                          : 'bg-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
+                      }`}
+                    >
+                      Build
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGenerationMode('plan')}
+                      className={`px-8 py-3 rounded-md text-[10px] font-bold transition-all ${
+                        generationMode === 'plan'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
+                          : 'bg-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
+                      }`}
+                    >
+                      Plan
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={sendChatMessage}
+                  disabled={!aiChatInput.trim()}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                    aiChatInput.trim()
+                      ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-600/15 active:scale-95'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 cursor-not-allowed'
+                  }`}
                 >
-                  <option value="build">Build</option>
-                  <option value="plan">Plan</option>
-                </select>
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
