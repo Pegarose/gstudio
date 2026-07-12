@@ -4110,7 +4110,7 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           ) : (
             <div
-              className="flex-1 overflow-y-auto p-24 flex flex-col gap-16 scrollbar-hide"
+              className="flex-1 overflow-y-auto p-24 flex flex-col gap-20 scrollbar-hide bg-[#fafafa] dark:bg-neutral-950"
               ref={chatMessagesRef}>
             {chatMessages.map((msg, idx) => {
               // Check if this message is from a successful generation
@@ -4122,46 +4122,51 @@ Focus on the key sections and content, making it clean and modern.`;
               // const completedFiles = msg.metadata?.appliedFiles || [];
               
               return (
-                <div key={idx} className="block">
-                  <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className="block">
-                      <div className={`block rounded-12 px-16 py-12 ${
-                        msg.type === 'user' ? 'bg-[#36322F] text-white ml-auto max-w-[80%]' :
-                        msg.type === 'ai' ? 'bg-gray-100 text-gray-900 mr-auto max-w-[80%]' :
-                        msg.type === 'system' ? 'bg-[#36322F] text-white text-sm' :
-                        msg.type === 'command' ? 'bg-[#36322F] text-white font-mono text-sm' :
-                        msg.type === 'error' ? 'bg-red-900 text-red-100 text-sm border border-red-700' :
-                        'bg-[#36322F] text-white text-sm'
+                <div key={idx} className="block w-full">
+                  <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'} w-full`}>
+                    <div className="block w-full">
+                      <div className={`block ${
+                        msg.type === 'user' ? 'bg-neutral-800 text-white ml-auto max-w-[85%] rounded-2xl px-12 py-8 shadow-sm text-sm font-sans' :
+                        msg.type === 'ai' ? 'bg-transparent text-neutral-800 dark:text-neutral-100 mr-auto w-full text-sm leading-relaxed font-sans py-4' :
+                        msg.type === 'system' ? 'bg-white dark:bg-neutral-900 border border-neutral-200/50 dark:border-neutral-800 rounded-2xl px-12 py-8 text-neutral-600 dark:text-neutral-300 text-xs shadow-sm max-w-[90%]' :
+                        msg.type === 'command' ? 'bg-neutral-800 text-neutral-200 font-mono text-xs rounded-xl px-12 py-8 w-full max-w-[90%]' :
+                        msg.type === 'error' ? 'bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 text-sm border border-red-200 dark:border-red-900 rounded-xl px-12 py-8 max-w-[90%]' :
+                        'bg-white dark:bg-neutral-900 border border-neutral-200 rounded-xl px-12 py-8 text-sm'
                       }`}>
                     {msg.type === 'command' ? (
-                      <div className="flex items-start gap-8">
-                        <span className={`text-xs ${
-                          msg.metadata?.commandType === 'input' ? 'text-blue-400' :
-                          msg.metadata?.commandType === 'error' ? 'text-red-400' :
-                          msg.metadata?.commandType === 'success' ? 'text-green-400' :
-                          'text-gray-400'
-                        }`}>
-                          {msg.metadata?.commandType === 'input' ? '$' : '>'}
-                        </span>
-                        <span className="flex-1 whitespace-pre-wrap text-white">{msg.content}</span>
+                       <div className="flex items-start gap-8">
+                         <span className={`text-xs ${
+                           msg.metadata?.commandType === 'input' ? 'text-blue-400' :
+                           msg.metadata?.commandType === 'error' ? 'text-red-400' :
+                           msg.metadata?.commandType === 'success' ? 'text-green-400' :
+                           'text-gray-400'
+                         }`}>
+                           {msg.metadata?.commandType === 'input' ? '$' : '>'}
+                         </span>
+                         <span className="flex-1 whitespace-pre-wrap text-neutral-200">{msg.content}</span>
+                       </div>
+                    ) : msg.type === 'system' ? (
+                      <div className="flex items-center gap-8">
+                        <div className="w-10 h-10 border-2 border-orange-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        <span className="font-semibold">{msg.content}</span>
                       </div>
                     ) : msg.type === 'error' ? (
-                      <div className="flex items-start gap-12">
-                        <div className="flex-shrink-0">
-                          <div className="w-32 h-32 bg-red-800 rounded-full flex items-center justify-center">
-                            <svg className="w-24 h-24 text-red-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                          </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-semibold mb-4">Build Errors Detected</div>
-                          <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
-                          <div className="mt-8 text-xs opacity-70">Press 'F' or click the Fix button above to resolve</div>
-                        </div>
-                      </div>
+                       <div className="flex items-start gap-12">
+                         <div className="flex-shrink-0">
+                           <div className="w-32 h-32 bg-red-100 dark:bg-red-900/50 rounded-full flex items-center justify-center">
+                             <svg className="w-20 h-20 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                             </svg>
+                           </div>
+                         </div>
+                         <div className="flex-1">
+                           <div className="font-semibold mb-4">Build Errors Detected</div>
+                           <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+                           <div className="mt-8 text-xs opacity-70">Press 'F' or click the Fix button above to resolve</div>
+                         </div>
+                       </div>
                     ) : (
-                      <span className="text-sm">{msg.content}</span>
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
                     )}
                       </div>
 
