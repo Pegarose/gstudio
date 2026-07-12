@@ -20,6 +20,7 @@ services:
       - "9010:9010"
     environment:
       - PORT=9010
+      - DOCKER_ENV=true
     env_file:
       - .env.local
     depends_on:

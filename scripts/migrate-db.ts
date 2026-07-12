@@ -5,8 +5,12 @@ import * as path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 async function migrate() {
+  const connectionString = process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV === 'true'
+    ? process.env.DATABASE_URL_DOCKER
+    : process.env.DATABASE_URL;
+
   const client = new Client({
-    connectionString: process.env.DATABASE_URL
+    connectionString
   });
   
   await client.connect();
