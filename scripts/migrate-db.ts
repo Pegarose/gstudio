@@ -26,6 +26,7 @@ async function migrate() {
       planning_model VARCHAR(255),
       coder_model VARCHAR(255),
       qa_model VARCHAR(255),
+      chat_messages JSONB,
       status VARCHAR(50) DEFAULT 'active',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -35,6 +36,9 @@ async function migrate() {
   // Migration for existing tables
   await client.query(`
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS qa_model VARCHAR(255);
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS chat_messages JSONB;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT FALSE;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS visibility VARCHAR(50) DEFAULT 'private';
   `);
   
   // Create versions table to store file snapshots

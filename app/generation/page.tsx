@@ -123,6 +123,7 @@ function AISandboxPage() {
   } | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
@@ -1944,15 +1945,25 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Show sandbox iframe - keep showing during edits, only hide during initial loading
       if (sandboxData?.url) {
         return (
-          <div className="relative w-full h-full">
-            <iframe
-              ref={iframeRef}
-              src={sandboxData.url}
-              className="w-full h-full border-none"
-              title="G Studio Sandbox"
-              allow="clipboard-write"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-            />
+          <div className="relative w-full h-full bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center p-16 overflow-auto">
+            <div 
+              style={{
+                width: previewDevice === 'mobile' ? '375px' : previewDevice === 'tablet' ? '768px' : '100%',
+                height: previewDevice === 'desktop' ? '100%' : 'calc(100% - 32px)',
+                maxHeight: '100%',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+              }}
+              className="relative shadow-2xl rounded-2xl overflow-hidden border border-neutral-200/80 dark:border-neutral-800 bg-white"
+            >
+              <iframe
+                ref={iframeRef}
+                src={sandboxData.url}
+                className="w-full h-full border-none"
+                title="G Studio Sandbox"
+                allow="clipboard-write"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              />
+            </div>
 
             {/* Iframe Floating Editor Toolbar Overlay */}
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white border border-gray-200 rounded-full px-4 py-2 shadow-lg flex items-center gap-3 z-20">
@@ -3762,52 +3773,58 @@ Focus on the key sections and content, making it clean and modern.`;
 
   return (
     <HeaderProvider>
-      <div className="font-sans bg-background text-foreground h-screen flex flex-col">
-      <div className="bg-white px-4 py-[8px] border-b border-border-faint flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-3">
-          <HeaderBrandKit />
-          <div className="h-4 w-[1px] bg-gray-200" />
+      <div className="font-sans bg-[#fafafa] dark:bg-neutral-950 text-foreground h-screen flex flex-col">
+      <div className="bg-white/90 dark:bg-neutral-900/90 backdrop-blur-md px-16 py-10 border-b border-neutral-200/60 dark:border-neutral-800/80 flex items-center justify-between shadow-sm z-30">
+        <div className="flex items-center gap-12">
+          <button 
+            type="button"
+            onClick={() => router.push('/')} 
+            className="hover:opacity-85 transition-all focus:outline-none flex-shrink-0"
+            title="Back to home dashboard"
+          >
+            <HeaderBrandKit />
+          </button>
+          <div className="h-16 w-[1px] bg-neutral-200 dark:bg-neutral-800 flex-shrink-0" />
           
           {/* Lovable Title and Settings Dropdown Menu */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-              className="flex items-center gap-4 text-sm font-bold text-gray-800 hover:bg-gray-50 px-8 py-4 rounded-8 transition-all"
+              className="flex items-center gap-6 text-xs font-bold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 px-10 py-6 rounded-lg transition-all border border-neutral-200/40 dark:border-neutral-800/40 shadow-sm"
             >
-              <span>{sessionStorage.getItem('projectName') || 'Marble Brilliance CMS'}</span>
-              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <span>{sessionStorage.getItem('projectName') || 'Active Project'}</span>
+              <svg className="w-3.5 h-3.5 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-            
             {showProjectDropdown && (
-              <div className="absolute left-0 mt-8 w-260 bg-white border border-gray-200 rounded-12 shadow-xl z-50 p-16 text-xs text-gray-700 animate-fade-in-up">
+              <div className="absolute left-0 mt-8 w-260 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 p-16 text-xs text-neutral-755 dark:text-neutral-300 animate-fade-in-up">
                 {/* Active Project & Sandbox Header */}
-                <div className="pb-12 border-b border-gray-150 mb-12">
+                <div className="pb-12 border-b border-neutral-100 dark:border-neutral-805 mb-12">
                   <div className="flex items-center gap-8 mb-8">
-                    <div className="w-24 h-24 bg-orange-600 rounded-full flex items-center justify-center text-white text-[10px] font-extrabold">
+                    <div className="w-24 h-24 bg-orange-655 rounded-full flex items-center justify-center text-white text-[10px] font-extrabold shadow-sm select-none">
                       {sessionStorage.getItem('projectName') ? sessionStorage.getItem('projectName')!.charAt(0).toUpperCase() : 'P'}
                     </div>
-                    <div className="font-bold text-gray-900 truncate flex-1">
+                    <div className="font-bold text-neutral-900 dark:text-white truncate flex-1">
                       {sessionStorage.getItem('projectName') || 'Active Project'}
                     </div>
-                    <span className="text-[8px] font-bold px-6 py-2 bg-green-100 text-green-700 rounded-full uppercase tracking-wider">
+                    <span className="text-[8px] font-bold px-6 py-2 bg-green-500/10 text-green-600 rounded-full uppercase tracking-wider select-none">
                       Active
                     </span>
                   </div>
                   
                   {/* Sandbox Info */}
-                  <div className="space-y-4 text-[10px] text-gray-500">
+                  <div className="space-y-4 text-[10px] text-neutral-500 dark:text-neutral-400">
                     <div className="flex justify-between">
-                      <span className="font-medium">Sandbox ID:</span>
-                      <span className="font-mono text-gray-900 truncate max-w-[120px]" title={sandboxData?.sandboxId || 'None'}>
+                      <span className="font-semibold">Sandbox ID:</span>
+                      <span className="font-mono text-neutral-850 dark:text-neutral-200 truncate max-w-[120px]" title={sandboxData?.sandboxId || 'None'}>
                         {sandboxData?.sandboxId || 'Creating...'}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="font-medium">Vite Server:</span>
-                      <span className={`font-bold ${sandboxData?.url ? 'text-green-600' : 'text-yellow-600'}`}>
+                      <span className="font-semibold">Vite Server:</span>
+                      <span className={`font-bold ${sandboxData?.url ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
                         {sandboxData?.url ? 'Running' : 'Offline'}
                       </span>
                     </div>
@@ -3816,7 +3833,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         href={sandboxData.url} 
                         target="_blank" 
                         rel="noreferrer" 
-                        className="block text-center mt-6 py-4 text-blue-600 hover:text-blue-700 font-bold border border-blue-100 hover:border-blue-200 rounded-8 hover:bg-blue-50 transition-all text-[10px]"
+                        className="block text-center mt-6 py-4 text-orange-600 hover:text-orange-755 dark:text-orange-400 dark:hover:text-orange-350 font-bold border border-orange-100 dark:border-orange-950/30 hover:border-orange-200 dark:hover:border-orange-900 rounded-lg hover:bg-orange-50/50 dark:hover:bg-orange-950/10 transition-all text-[10px]"
                       >
                         Open Sandbox URL
                       </a>
@@ -3854,21 +3871,21 @@ Focus on the key sections and content, making it clean and modern.`;
                             toast.error(`Error restarting Vite: ${err.message}`);
                           });
                       }}
-                      className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-gray-700 hover:text-gray-900"
+                      className="w-full text-left py-8 px-8 hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded-lg font-semibold flex items-center gap-8 text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-all"
                     >
-                      <svg className="w-14 h-14 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6H16" />
+                      <svg className="w-3.5 h-3.5 text-neutral-450" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6H16" />
                       </svg>
                       Restart Dev Server
                     </button>
                   )}
                   
-                  <button type="button" onClick={() => { setShowProjectDropdown(false); setShowHistoryPanel(true); }} className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-gray-700 hover:text-gray-900">
-                    <svg className="w-14 h-14 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <button type="button" onClick={() => { setShowProjectDropdown(false); setShowHistoryPanel(true); }} className="w-full text-left py-8 px-8 hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded-lg font-semibold flex items-center gap-8 text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-all">
+                    <svg className="w-3.5 h-3.5 text-neutral-455" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     Version History
                   </button>
-
-                  <div className="h-1 w-full bg-gray-100 my-4" />
+ 
+                  <div className="h-[1px] w-full bg-neutral-100 dark:bg-neutral-800 my-4" />
                   
                   <button 
                     type="button" 
@@ -3898,9 +3915,9 @@ Focus on the key sections and content, making it clean and modern.`;
                         }
                       }
                     }} 
-                    className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-red-600 hover:text-red-700"
+                    className="w-full text-left py-8 px-8 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg font-semibold flex items-center gap-8 text-red-600 hover:text-red-700 dark:text-red-400 transition-all"
                   >
-                    <svg className="w-14 h-14 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                     Delete Project
                   </button>
                 </div>
@@ -3908,60 +3925,61 @@ Focus on the key sections and content, making it clean and modern.`;
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-8">
           {/* AI Agent Team Button */}
           <button
             type="button"
             onClick={() => setShowTeamModal(true)}
-            className="flex items-center gap-6 px-12 py-6 bg-orange-50 border border-orange-200 text-orange-800 rounded-8 hover:bg-orange-100 transition-all font-semibold shadow-sm text-xs"
+            className="flex items-center gap-6 px-12 py-6 bg-gradient-to-r from-orange-500/10 to-amber-500/10 hover:from-orange-500/20 hover:to-amber-500/20 border border-orange-200/50 dark:border-orange-900/30 text-orange-700 dark:text-orange-303 rounded-full hover:bg-orange-100/50 transition-all font-bold shadow-sm text-[11px]"
             title="Configure AI agent models & settings"
           >
-            <svg className="w-16 h-16 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            <svg className="w-4 h-4 text-orange-550" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
             <span>
               AI Team: {appConfig.ai.modelDisplayNames?.[planningModel] ? appConfig.ai.modelDisplayNames[planningModel].split(' ')[0] : 'Plan'} • {appConfig.ai.modelDisplayNames?.[coderModel] ? appConfig.ai.modelDisplayNames[coderModel].split(' ')[0] : 'Code'} • {appConfig.ai.modelDisplayNames?.[qaModel] ? appConfig.ai.modelDisplayNames[qaModel].split(' ')[0] : 'QA'}
             </span>
           </button>
+          
           <button 
             onClick={() => createSandbox()}
-            className="p-8 rounded-lg transition-colors bg-gray-50 border border-gray-200 text-gray-700 hover:bg-gray-100"
+            className="p-8 rounded-full transition-all bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-350 hover:bg-neutral-50 dark:hover:bg-neutral-805 shadow-sm active:scale-95"
             title="Create new sandbox"
           >
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
           </button>
           <button 
             onClick={reapplyLastGeneration}
-            className="p-8 rounded-lg transition-colors bg-gray-50 border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-8 rounded-full transition-all bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-350 hover:bg-neutral-50 dark:hover:bg-neutral-805 shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             title="Re-apply last generation"
             disabled={!conversationContext.lastGeneratedCode || !sandboxData}
           >
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
           <button 
             onClick={downloadZip}
             disabled={!sandboxData}
-            className="p-8 rounded-lg transition-colors bg-gray-50 border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-8 rounded-full transition-all bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-355 hover:bg-neutral-50 dark:hover:bg-neutral-805 shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             title="Download your Vite app as ZIP"
           >
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
             </svg>
           </button>
-       
         </div>
       </div>
+      
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Center Panel - AI Chat (1/3 of remaining width) */}
-        <div className="flex-1 max-w-[400px] flex flex-col border-r border-border bg-background">
+        {/* Left Panel - AI Chat & Visual Editor */}
+        <div className="w-[400px] min-w-[400px] flex flex-col border-r border-neutral-200/60 dark:border-neutral-800/80 bg-white dark:bg-neutral-900/40 backdrop-blur-md">
           {/* Sidebar Input Component */}
           {!hasInitialSubmission ? (
-            <div className="p-4 border-b border-border">
+            <div className="p-16 border-b border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/20">
               <SidebarInput
                 onSubmit={(url, style, model, instructions) => {
                   // Mark that we've had an initial submission
@@ -3987,8 +4005,8 @@ Focus on the key sections and content, making it clean and modern.`;
           ) : null}
 
           {conversationContext.scrapedWebsites.length > 0 && (
-            <div className="p-4 bg-card border-b border-gray-200">
-              <div className="flex flex-col gap-4">
+            <div className="p-16 bg-neutral-50/50 dark:bg-neutral-900/30 border-b border-neutral-200/50 dark:border-neutral-800/60">
+              <div className="flex flex-col gap-12">
                 {Array.from(new Map(conversationContext.scrapedWebsites.map(s => [s.url, s])).values()).map((site, idx) => {
                   // Extract favicon and site info from the scraped data
                   const metadata = site.content?.metadata || {};
@@ -3998,14 +4016,14 @@ Focus on the key sections and content, making it clean and modern.`;
                   const screenshot = site.content?.screenshot || sessionStorage.getItem('websiteScreenshot');
                   
                   return (
-                    <div key={idx} className="flex flex-col gap-3">
+                    <div key={idx} className="flex flex-col gap-12">
                       {/* Site info with favicon */}
-                      <div className="flex items-center gap-4 text-sm">
+                      <div className="flex items-center gap-10 text-xs">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={favicon} 
                           alt={siteName}
-                          className="w-16 h-16 rounded"
+                          className="w-5 h-5 rounded-md shadow-sm"
                           onError={(e) => {
                             e.currentTarget.src = `https://www.google.com/s2/favicons?domain=${new URL(sourceURL).hostname}&sz=128`;
                           }}
@@ -4014,7 +4032,7 @@ Focus on the key sections and content, making it clean and modern.`;
                           href={sourceURL} 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          className="text-black hover:text-gray-700 truncate max-w-[250px] font-medium"
+                          className="text-neutral-800 dark:text-neutral-200 hover:text-orange-500 dark:hover:text-orange-400 truncate max-w-[250px] font-bold transition-all"
                           title={sourceURL}
                         >
                           {siteName}
@@ -4024,30 +4042,30 @@ Focus on the key sections and content, making it clean and modern.`;
                       {/* Pinned screenshot */}
                       {screenshot && (
                         <div className="w-full">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-gray-600">Screenshot Preview</span>
+                          <div className="flex items-center justify-between mb-8">
+                            <span className="text-[10px] font-bold text-neutral-450 uppercase tracking-wider">Screenshot Preview</span>
                             <button
                               onClick={() => setScreenshotCollapsed(!screenshotCollapsed)}
-                              className="text-gray-500 hover:text-gray-700 transition-colors p-1"
+                              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800"
                               aria-label={screenshotCollapsed ? 'Expand screenshot' : 'Collapse screenshot'}
                             >
                               <svg
-                                width="16"
-                                height="16"
+                                width="14"
+                                height="14"
                                 viewBox="0 0 16 16"
                                 fill="none"
                                 xmlns="http://www.w3.org/2000/svg"
-                                className={`transition-transform duration-300 ${screenshotCollapsed ? 'rotate-180' : ''}`}
+                                className={`transition-transform duration-350 ${screenshotCollapsed ? 'rotate-180' : ''}`}
                               >
-                                <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                               </svg>
                             </button>
                           </div>
                           <div
-                            className="w-full rounded-lg overflow-hidden border border-gray-200 transition-all duration-300"
+                            className="w-full rounded-xl overflow-hidden border border-neutral-200/60 dark:border-neutral-800/80 transition-all duration-355 shadow-sm"
                             style={{
                               opacity: screenshotCollapsed ? 0 : 1,
-                              transform: screenshotCollapsed ? 'translateY(-20px)' : 'translateY(0)',
+                              transform: screenshotCollapsed ? 'translateY(-10px)' : 'translateY(0)',
                               pointerEvents: screenshotCollapsed ? 'none' : 'auto',
                               maxHeight: screenshotCollapsed ? '0' : '200px'
                             }}
@@ -4070,36 +4088,36 @@ Focus on the key sections and content, making it clean and modern.`;
           )}
 
           {showHistoryPanel ? (
-            <div className="flex-1 flex flex-col overflow-hidden bg-white p-6">
-              <div className="flex justify-between items-center pb-4 border-b border-gray-200 mb-4">
-                <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wide">Version History</h3>
+            <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-neutral-900 p-16">
+              <div className="flex justify-between items-center pb-12 border-b border-neutral-200 dark:border-neutral-800 mb-16">
+                <h3 className="text-[11px] font-bold text-neutral-800 dark:text-white uppercase tracking-wider font-sans">Version History</h3>
                 <button
                   type="button"
                   onClick={() => setShowHistoryPanel(false)}
-                  className="text-gray-500 hover:text-gray-700 text-[10px] font-bold"
+                  className="text-neutral-455 hover:text-neutral-600 dark:hover:text-white text-[10px] font-bold px-8 py-4 rounded hover:bg-neutral-50 dark:hover:bg-neutral-805 transition-all"
                 >
                   Close
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-hide">
+              <div className="flex-1 overflow-y-auto space-y-12 pr-4 scrollbar-hide">
                 {historyLog.length === 0 ? (
-                  <div className="text-center text-xs text-gray-400 py-12">
+                  <div className="text-center text-xs text-neutral-400 py-24">
                     No versions saved yet. Make edits to create snapshot versions.
                   </div>
                 ) : (
                   historyLog.map((ver) => (
                     <div
                       key={ver.id}
-                      className="p-4 bg-gray-50 border border-gray-150 rounded-xl hover:border-gray-300 transition-all flex justify-between items-center"
+                      className="p-12 bg-neutral-50/50 dark:bg-neutral-850/40 border border-neutral-200 dark:border-neutral-800/80 rounded-xl hover:border-neutral-300 dark:hover:border-neutral-700 transition-all flex justify-between items-center"
                     >
-                      <div className="space-y-1">
-                        <div className="text-xs font-bold text-gray-800">{ver.version_title}</div>
-                        <div className="text-[9px] text-gray-400">{new Date(ver.created_at).toLocaleString()}</div>
+                      <div className="space-y-4">
+                        <div className="text-xs font-bold text-neutral-855 dark:text-neutral-200">{ver.version_title}</div>
+                        <div className="text-[9px] text-neutral-400 dark:text-neutral-500">{new Date(ver.created_at).toLocaleString()}</div>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleRevertVersion(ver.id, ver.version_title)}
-                        className="px-4 py-2 bg-gray-900 hover:bg-black text-white text-[10px] font-bold rounded-lg transition-all shadow-sm"
+                        className="px-10 py-5 bg-neutral-900 dark:bg-neutral-100 hover:bg-black dark:hover:bg-white text-white dark:text-neutral-900 text-[10px] font-bold rounded-lg transition-all shadow-sm"
                       >
                         Revert
                       </button>
@@ -4122,16 +4140,26 @@ Focus on the key sections and content, making it clean and modern.`;
               // const completedFiles = msg.metadata?.appliedFiles || [];
               
               return (
-                <div key={idx} className="block w-full">
+                <div key={idx} className="block w-full animate-fade-in-up">
                   <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'} w-full`}>
-                    <div className="block w-full">
+                    <div className={`flex items-start gap-10 w-full ${msg.type === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      {msg.type === 'user' ? (
+                        <div className="w-24 h-24 rounded-full bg-neutral-200 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 flex items-center justify-center text-[10px] font-bold text-neutral-700 dark:text-neutral-305 flex-shrink-0 shadow-sm select-none">
+                          U
+                        </div>
+                      ) : msg.type === 'ai' ? (
+                        <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-[9px] font-black text-white flex-shrink-0 shadow-md select-none">
+                          G
+                        </div>
+                      ) : null}
+
                       <div className={`block ${
-                        msg.type === 'user' ? 'bg-neutral-800 text-white ml-auto max-w-[85%] rounded-2xl px-12 py-8 shadow-sm text-sm font-sans' :
-                        msg.type === 'ai' ? 'bg-transparent text-neutral-800 dark:text-neutral-100 mr-auto w-full text-sm leading-relaxed font-sans py-4' :
-                        msg.type === 'system' ? 'bg-white dark:bg-neutral-900 border border-neutral-200/50 dark:border-neutral-800 rounded-2xl px-12 py-8 text-neutral-600 dark:text-neutral-300 text-xs shadow-sm max-w-[90%]' :
-                        msg.type === 'command' ? 'bg-neutral-800 text-neutral-200 font-mono text-xs rounded-xl px-12 py-8 w-full max-w-[90%]' :
-                        msg.type === 'error' ? 'bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 text-sm border border-red-200 dark:border-red-900 rounded-xl px-12 py-8 max-w-[90%]' :
-                        'bg-white dark:bg-neutral-900 border border-neutral-200 rounded-xl px-12 py-8 text-sm'
+                        msg.type === 'user' ? 'bg-neutral-900 dark:bg-neutral-850 text-white ml-auto max-w-[85%] rounded-2xl rounded-tr-none px-14 py-8 shadow-sm text-xs font-sans leading-relaxed' :
+                        msg.type === 'ai' ? 'bg-transparent text-neutral-850 dark:text-neutral-100 mr-auto w-full text-xs leading-relaxed font-sans py-4' :
+                        msg.type === 'system' ? 'bg-white dark:bg-neutral-900 border border-neutral-200/50 dark:border-neutral-800 rounded-2xl px-12 py-8 text-neutral-600 dark:text-neutral-350 text-[11px] shadow-sm flex items-center gap-8' :
+                        msg.type === 'command' ? 'bg-neutral-900 text-neutral-200 font-mono text-[11px] rounded-xl px-12 py-8 w-full border border-neutral-850' :
+                        msg.type === 'error' ? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 text-xs border border-red-200 dark:border-red-900/50 rounded-xl px-12 py-8' :
+                        'bg-white dark:bg-neutral-900 border border-neutral-200 rounded-xl px-12 py-8 text-xs'
                       }`}>
                     {msg.type === 'command' ? (
                        <div className="flex items-start gap-8">
@@ -4703,55 +4731,112 @@ Focus on the key sections and content, making it clean and modern.`;
         </div>
 
         {/* Right Panel - Preview or Generation (2/3 of remaining width) */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-3 pt-4 pb-4 bg-white border-b border-gray-200 flex justify-between items-center">
-            <div className="flex items-center gap-2">
+        <div className="flex-1 flex flex-col overflow-hidden bg-neutral-50 dark:bg-neutral-950">
+          <div className="px-16 py-10 bg-white dark:bg-neutral-900 border-b border-neutral-200/60 dark:border-neutral-800/80 flex justify-between items-center z-20 shadow-sm gap-12">
+            <div className="flex items-center gap-12 flex-shrink-0">
+              {/* Traffic light control dots */}
+              <div className="flex items-center gap-6">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-400 dark:bg-red-500/70" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 dark:bg-yellow-500/70" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-400 dark:bg-green-500/70" />
+              </div>
+
               {/* Toggle-style Code/View switcher */}
-              <div className="inline-flex bg-gray-100 border border-gray-200 rounded-md p-0.5">
+              <div className="inline-flex bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 border border-neutral-200/50 dark:border-neutral-850">
                 <button
                   onClick={() => setActiveTab('generation')}
-                  className={`px-3 py-1 rounded transition-all text-xs font-medium ${
+                  className={`px-12 py-4 rounded-md transition-all text-xs font-semibold ${
                     activeTab === 'generation' 
-                      ? 'bg-white text-gray-900 shadow-sm' 
-                      : 'bg-transparent text-gray-600 hover:text-gray-900'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm' 
+                      : 'bg-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-200'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                  <div className="flex items-center gap-6">
+                    <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
                     <span>Code</span>
                   </div>
                 </button>
                 <button
                   onClick={() => setActiveTab('preview')}
-                  className={`px-3 py-1 rounded transition-all text-xs font-medium ${
+                  className={`px-12 py-4 rounded-md transition-all text-xs font-semibold ${
                     activeTab === 'preview' 
-                      ? 'bg-white text-gray-900 shadow-sm' 
-                      : 'bg-transparent text-gray-600 hover:text-gray-900'
+                      ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm' 
+                      : 'bg-transparent text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-200'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  <div className="flex items-center gap-6">
+                    <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
                     <span>View</span>
                   </div>
                 </button>
               </div>
             </div>
-            <div className="flex gap-2 items-center">
+
+            {/* Address Bar */}
+            {activeTab === 'preview' && (
+              <div className="flex-1 max-w-[400px] mx-auto px-12 py-5 bg-neutral-100 dark:bg-neutral-800/80 border border-neutral-200/50 dark:border-neutral-800 rounded-lg text-[10px] font-mono text-neutral-500 dark:text-neutral-400 text-center truncate flex items-center justify-center gap-6 shadow-inner select-none animate-fade-in">
+                <svg className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span className="truncate">{sandboxData?.url || 'http://localhost:3000'}</span>
+              </div>
+            )}
+
+            <div className="flex gap-8 items-center flex-shrink-0">
+              {/* Device Selector */}
+              {activeTab === 'preview' && (
+                <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 border border-neutral-200/60 dark:border-neutral-850 animate-fade-in">
+                  <button
+                    onClick={() => setPreviewDevice('desktop')}
+                    className={`p-4 rounded transition-all text-xs font-semibold ${
+                      previewDevice === 'desktop'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                        : 'bg-transparent text-neutral-450 hover:text-neutral-800 dark:hover:text-white'
+                    }`}
+                    title="Desktop view"
+                  >
+                    🖥️
+                  </button>
+                  <button
+                    onClick={() => setPreviewDevice('tablet')}
+                    className={`p-4 rounded transition-all text-xs font-semibold ${
+                      previewDevice === 'tablet'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                        : 'bg-transparent text-neutral-455 hover:text-neutral-800 dark:hover:text-white'
+                    }`}
+                    title="Tablet view"
+                  >
+                    📱
+                  </button>
+                  <button
+                    onClick={() => setPreviewDevice('mobile')}
+                    className={`p-4 rounded transition-all text-xs font-semibold ${
+                      previewDevice === 'mobile'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                        : 'bg-transparent text-neutral-455 hover:text-neutral-800 dark:hover:text-white'
+                    }`}
+                    title="Mobile view"
+                  >
+                    📞
+                  </button>
+                </div>
+              )}
+
               {/* Files generated count */}
               {activeTab === 'generation' && !generationProgress.isEdit && generationProgress.files.length > 0 && (
-                <div className="text-gray-500 text-xs font-medium">
+                <div className="text-neutral-500 text-xs font-medium">
                   {generationProgress.files.length} files generated
                 </div>
               )}
               
               {/* Live Code Generation Status */}
               {activeTab === 'generation' && generationProgress.isGenerating && (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-md text-xs font-medium text-gray-700">
+                <div className="inline-flex items-center gap-1.5 px-10 py-4 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 rounded-lg text-xs font-semibold text-neutral-700 dark:text-neutral-300">
                   <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                   {generationProgress.isEdit ? 'Editing code' : 'Live generation'}
                 </div>
@@ -4759,8 +4844,8 @@ Focus on the key sections and content, making it clean and modern.`;
               
               {/* Sandbox Status Indicator */}
               {sandboxData && (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-md text-xs font-medium text-gray-700">
-                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                <div className="inline-flex items-center gap-1.5 px-10 py-4 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 rounded-lg text-xs font-semibold text-neutral-700 dark:text-neutral-305 animate-fade-in">
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                   Sandbox active
                 </div>
               )}
@@ -4772,10 +4857,10 @@ Focus on the key sections and content, making it clean and modern.`;
                   target="_blank" 
                   rel="noopener noreferrer"
                   title="Open in new tab"
-                  className="p-1.5 rounded-md transition-all text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                  className="p-6 rounded-lg transition-all text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
                 </a>
               )}

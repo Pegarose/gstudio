@@ -62,11 +62,28 @@
     
     const tag = e.target.tagName.toLowerCase();
     const text = e.target.textContent?.trim() || '';
+    const className = e.target.className || '';
+    
+    // Get computed styles for visual editing
+    const styles = window.getComputedStyle(e.target);
+    const computed = {
+      color: styles.color,
+      backgroundColor: styles.backgroundColor,
+      padding: styles.padding,
+      margin: styles.margin,
+      display: styles.display,
+      flexDirection: styles.flexDirection,
+      gap: styles.gap,
+      borderWidth: styles.borderWidth,
+      borderColor: styles.borderColor
+    };
     
     window.parent.postMessage({
       type: 'ELEMENT_SELECTED',
       tag,
-      text: text.substring(0, 80)
+      text: text.substring(0, 80),
+      className,
+      computed
     }, '*');
   });
 })();

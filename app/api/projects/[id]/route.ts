@@ -10,7 +10,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     const result = await query(
-      'SELECT id, name, target_url, style, planning_model, coder_model, qa_model, created_at, updated_at FROM projects WHERE id = $1',
+      'SELECT id, name, target_url, style, planning_model, coder_model, qa_model, chat_messages, created_at, updated_at FROM projects WHERE id = $1',
       [id]
     );
 
@@ -52,7 +52,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const { name, targetUrl, style, planningModel, coderModel, qaModel } = await request.json();
+    const { name, targetUrl, style, planningModel, coderModel, qaModel, chatMessages, isStarred, visibility } = await request.json();
 
     if (!id) {
       return NextResponse.json({ success: false, error: 'Project ID is required' }, { status: 400 });
@@ -66,9 +66,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
            planning_model = COALESCE($4, planning_model),
            coder_model = COALESCE($5, coder_model),
            qa_model = COALESCE($6, qa_model),
+           chat_messages = COALESCE($7, chat_messages),
+           is_starred = COALESCE($8, is_starred),
+           visibility = COALESCE($9, visibility),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7
-       RETURNING id, name, target_url, style, planning_model, coder_model, qa_model, updated_at`,
+       WHERE id = $10
+       RETURNING id, name, target_url, style, planning_model, coder_model, qa_model, chat_messages, is_starred, visibility, updated_at`,
       [
         name !== undefined ? name : null,
         targetUrl !== undefined ? targetUrl : null,
@@ -76,6 +79,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         planningModel !== undefined ? planningModel : null,
         coderModel !== undefined ? coderModel : null,
         qaModel !== undefined ? qaModel : null,
+        chatMessages !== undefined ? JSON.stringify(chatMessages) : null,
+        isStarred !== undefined ? isStarred : null,
+        visibility !== undefined ? visibility : null,
         id
       ]
     );

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
 declare global {
   var activeSandboxProvider: any;
@@ -11,9 +12,16 @@ export async function POST() {
     console.log('[kill-sandbox] Stopping active sandbox...');
 
     let sandboxKilled = false;
+    const managedProvider = sandboxManager.getActiveProvider();
 
-    // Stop existing sandbox if any
-    if (global.activeSandboxProvider) {
+    if (managedProvider) {
+      await sandboxManager.terminateAll();
+      sandboxKilled = true;
+      console.log('[kill-sandbox] Sandbox manager cleaned up successfully');
+    }
+
+    // Stop a legacy provider only when it is not already managed above.
+    if (global.activeSandboxProvider && global.activeSandboxProvider !== managedProvider) {
       try {
         await global.activeSandboxProvider.terminate();
         sandboxKilled = true;
@@ -21,9 +29,10 @@ export async function POST() {
       } catch (e) {
         console.error('[kill-sandbox] Failed to stop sandbox:', e);
       }
-      global.activeSandboxProvider = null;
-      global.sandboxData = null;
     }
+
+    global.activeSandboxProvider = null;
+    global.sandboxData = null;
     
     // Clear existing files tracking
     if (global.existingFiles) {

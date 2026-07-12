@@ -15,10 +15,18 @@ export async function POST(request: NextRequest) {
 
     // Write all files directly to the sandbox
     for (const [path, content] of Object.entries(files)) {
+      let fileContent: string | Buffer = content as string;
+      if (typeof content === 'string' && content.startsWith('data:')) {
+        const matches = content.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches && matches.length === 3) {
+          fileContent = Buffer.from(matches[2], 'base64');
+        }
+      }
+
       if (sandbox.writeFile) {
-        await sandbox.writeFile(path, content as string);
+        await sandbox.writeFile(path, fileContent);
       } else if (sandbox.files?.write) {
-        await sandbox.files.write(`/home/user/app/${path}`, content as string);
+        await sandbox.files.write(`/home/user/app/${path}`, fileContent);
       }
     }
 
