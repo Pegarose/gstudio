@@ -1,0 +1,207 @@
+{
+  "version": "1.0",
+  "phase": 1,
+  "note": "Advisory seed data for DesignIntelligenceProvider. Palette is mood, not fixed hex. anti_patterns are binding avoid-notes. design-core keeps final authority.",
+  "product_types": [
+    {
+      "product_type": "SaaS landing",
+      "pattern": "Hero + social proof + pricing",
+      "style_family": "Swiss/Minimal",
+      "palette_mood": "Cool neutral + one accent",
+      "type_pairing": "Grotesk display / clean sans body",
+      "anti_patterns": ["No invented metrics", "No AI purple/pink gradient"]
+    },
+    {
+      "product_type": "Micro-SaaS / indie tool",
+      "pattern": "Marquee hero, single CTA",
+      "style_family": "Minimal",
+      "palette_mood": "Warm neutral",
+      "type_pairing": "Grotesk / sans",
+      "anti_patterns": ["No enterprise bloat", "No fake logo wall"]
+    },
+    {
+      "product_type": "B2B service",
+      "pattern": "Stat-led + case studies",
+      "style_family": "Swiss/Minimal",
+      "palette_mood": "Cool corporate",
+      "type_pairing": "Sans / sans",
+      "anti_patterns": ["No stock-photo handshakes", "No invented client counts"]
+    },
+    {
+      "product_type": "Developer tool / IDE",
+      "pattern": "Workbench, product-in-situ",
+      "style_family": "Dark OLED",
+      "palette_mood": "Dark neutral + signal accent",
+      "type_pairing": "Mono display / sans body",
+      "anti_patterns": ["No marketing fluff", "No light-only design"]
+    },
+    {
+      "product_type": "AI / chatbot platform",
+      "pattern": "Bento grid",
+      "style_family": "AI-Native / Minimal",
+      "palette_mood": "Cool + electric accent",
+      "type_pairing": "Grotesk / sans",
+      "anti_patterns": ["No overused sparkles emoji", "No purple-pink gradient cliché"]
+    },
+    {
+      "product_type": "Cybersecurity",
+      "pattern": "Stat-led, authority tone",
+      "style_family": "Dark / Swiss",
+      "palette_mood": "Dark + one alert accent",
+      "type_pairing": "Sans / sans",
+      "anti_patterns": ["No neon hacker cliché", "No fear-mongering stock imagery"]
+    },
+    {
+      "product_type": "Fintech dashboard",
+      "pattern": "Bento / workbench",
+      "style_family": "Minimal + dimensional",
+      "palette_mood": "Cool neutral + green/red data",
+      "type_pairing": "Sans / mono numerals",
+      "anti_patterns": ["No AI purple/pink gradient", "No playful rounded toy look"]
+    },
+    {
+      "product_type": "Banking",
+      "pattern": "Long document + trust blocks",
+      "style_family": "Accessible / Swiss",
+      "palette_mood": "Conservative cool",
+      "type_pairing": "Serif or sans / sans",
+      "anti_patterns": ["No AI purple/pink gradient", "No trendy brutalism"]
+    },
+    {
+      "product_type": "Personal finance tracker",
+      "pattern": "Bento dashboard",
+      "style_family": "Soft UI",
+      "palette_mood": "Calm cool + one accent",
+      "type_pairing": "Sans / sans",
+      "anti_patterns": ["No cluttered charts", "No aggressive red everywhere"]
+    },
+    {
+      "product_type": "E-commerce (general)",
+      "pattern": "Product grid + hero",
+      "style_family": "Flat / Minimal",
+      "palette_mood": "Brand-led neutral",
+      "type_pairing": "Sans / sans",
+      "anti_patterns": ["No auto-carousels", "No fake scarcity timers"]
+    },
+    {
+      "product_type": "Luxury e-commerce",
+      "pattern": "Editorial, image-led",
+      "style_family": "Exaggerated minimalism",
+      "palette_mood": "Monochrome + gold accent",
+      "type_pairing": "Serif display / sans",
+      "anti_patterns": ["No clutter", "No bright discount badges", "No neon"]
+    },
+    {
+      "product_type": "Marketplace (P2P)",
+      "pattern": "Search-first + listings grid",
+      "style_family": "Minimal",
+      "palette_mood": "Neutral + trust accent",
+      "type_pairing": "Sans / sans",
+      "anti_patterns": ["No confusing dual-audience hero", "No invented review counts"]
+    },
+    {
+      "product_type": "Food delivery",
+      "pattern": "Hero + category tiles",
+      "style_family": "Vibrant block",
+      "palette_mood": "Warm appetite tones",
+      "type_pairing": "Rounded sans / sans",
+      "anti_patterns": ["No tiny tap targets", "No muddy food stock photos"]
+    },
+    {
+      "product_type": "Medical clinic",
+      "pattern": "Long document + booking",
+      "style_family": "Accessible / Soft UI",
+      "palette_mood": "Calm cool + clean white",
+      "type_pairing": "Humanist sans / sans",
+      "anti_patterns": ["No dark mode", "No aggressive color", "AA contrast mandatory"]
+    },
+    {
+      "product_type": "Mental health / meditation",
+      "pattern": "Manifesto / soft editorial",
+      "style_family": "Organic biophilic / Soft UI",
+      "palette_mood": "Muted calm",
+      "type_pairing": "Serif or soft sans / sans",
+      "anti_patterns": ["No harsh animation", "No neon", "No dense UI"]
+    },
+    {
+      "product_type": "Dental / veterinary",
+      "pattern": "Hero + services + booking",
+      "style_family": "Soft UI",
+      "palette_mood": "Friendly cool",
+      "type_pairing": "Rounded sans / sans",
+      "anti_patterns": ["No clinical coldness", "No stock-photo overload"]
+    },
+    {
+      "product_type": "Beauty / spa",
+      "pattern": "Marquee hero + testimonials",
+      "style_family": "Soft UI evolution",
+      "palette_mood": "Warm + gold accent",
+      "type_pairing": "Cormorant-style serif / sans",
+      "anti_patterns": ["No dark mode", "No neon", "No harsh motion"]
+    },
+    {
+      "product_type": "Restaurant",
+      "pattern": "Editorial hero + menu",
+      "style_family": "Editorial / Minimal",
+      "palette_mood": "Warm rich",
+      "type_pairing": "Serif display / sans",
+      "anti_patterns": ["No auto-playing video with sound", "No illegible script fonts"]
+    },
+    {
+      "product_type": "Hotel / hospitality",
+      "pattern": "Image-led long document",
+      "style_family": "Editorial",
+      "palette_mood": "Warm neutral",
+      "type_pairing": "Serif / sans",
+      "anti_patterns": ["No cluttered booking widgets above the fold"]
+    },
+    {
+      "product_type": "Legal / professional",
+      "pattern": "Long document, authority",
+      "style_family": "Swiss/Minimal",
+      "palette_mood": "Conservative neutral",
+      "type_pairing": "Serif / sans",
+      "anti_patterns": ["No playful illustration", "No trendy gradients"]
+    },
+    {
+      "product_type": "Portfolio",
+      "pattern": "Manifesto / bento",
+      "style_family": "Brutalism or Minimal (pick per tone)",
+      "palette_mood": "High-contrast mono + one accent",
+      "type_pairing": "Grotesk display / sans",
+      "anti_patterns": ["No generic template hero", "No fake client logos"]
+    },
+    {
+      "product_type": "Creative agency",
+      "pattern": "Motion-driven hero",
+      "style_family": "Neubrutalism / Bold",
+      "palette_mood": "Bold high-contrast",
+      "type_pairing": "Oversized grotesk / sans",
+      "anti_patterns": ["No timid corporate safe look", "No invented awards"]
+    },
+    {
+      "product_type": "Gaming",
+      "pattern": "Immersive hero, 3D accent",
+      "style_family": "Cyberpunk / 3D",
+      "palette_mood": "Dark + vibrant accent",
+      "type_pairing": "Display / sans",
+      "anti_patterns": ["No tiny text", "No accessibility-breaking contrast"]
+    },
+    {
+      "product_type": "Habit / mood tracker",
+      "pattern": "Bento dashboard",
+      "style_family": "Claymorphism / Soft UI",
+      "palette_mood": "Friendly warm",
+      "type_pairing": "Rounded sans / sans",
+      "anti_patterns": ["No overwhelming stats", "No guilt-driven red streaks"]
+    },
+    {
+      "product_type": "Web3 / NFT",
+      "pattern": "Bento + gallery",
+      "style_family": "AI-Native / Dark",
+      "palette_mood": "Dark + iridescent accent (restrained)",
+      "type_pairing": "Grotesk / mono",
+      "anti_patterns": ["No overused glassmorphism-on-neon", "No fake roadmap hype"]
+    }
+  ]
+}
