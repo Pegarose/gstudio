@@ -302,8 +302,6 @@ Some high-value clone targets sit behind anti-bot protection (Cloudflare Turnsti
 
 Recommendation: keep Firecrawl now, design to the ScraperProvider interface immediately so the later Crawlee (+ optional CloakBrowser) migration is a drop-in, and defer Scrapling unless a monitoring use case emerges.
 
-## Part 6 — Suggested Rollout
-
 ## Part 7 — Suggested Rollout
 
 ### Project Estimate
