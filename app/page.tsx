@@ -1,892 +1,580 @@
 "use client";
 
-import Link from "next/link";
-import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { appConfig } from '@/config/app.config';
 import { toast } from "sonner";
+import { appConfig } from "@/config/app.config";
 
-// Import shared components
-import { Connector } from "@/components/shared/layout/curvy-rect";
-import HeroFlame from "@/components/shared/effects/flame/hero-flame";
-import AsciiExplosion from "@/components/shared/effects/flame/ascii-explosion";
-import { HeaderProvider } from "@/components/shared/header/HeaderContext";
-
-// Import hero section components
-import HomeHeroBackground from "@/components/app/(home)/sections/hero/Background/Background";
-import { BackgroundOuterPiece } from "@/components/app/(home)/sections/hero/Background/BackgroundOuterPiece";
-import HomeHeroBadge from "@/components/app/(home)/sections/hero/Badge/Badge";
-import HomeHeroPixi from "@/components/app/(home)/sections/hero/Pixi/Pixi";
-import HomeHeroTitle from "@/components/app/(home)/sections/hero/Title/Title";
-import HeroInputSubmitButton from "@/components/app/(home)/sections/hero-input/Button/Button";
-// import Globe from "@/components/app/(home)/sections/hero-input/_svg/Globe";
-
-// Import header components
-import HeaderBrandKit from "@/components/shared/header/BrandKit/BrandKit";
-import HeaderWrapper from "@/components/shared/header/Wrapper/Wrapper";
-import HeaderDropdownWrapper from "@/components/shared/header/Dropdown/Wrapper/Wrapper";
-import GithubIcon from "@/components/shared/header/Github/_svg/GithubIcon";
-import ButtonUI from "@/components/ui/shadcn/button"
-
-interface SearchResult {
-  url: string;
-  title: string;
-  description: string;
-  screenshot: string | null;
-  markdown: string;
+interface Project {
+  id: string;
+  name: string;
+  targetUrl: string;
+  style: string;
+  planningModel: string;
+  coderModel: string;
+  status: "active" | "completed" | "progress";
+  updatedAt: string;
+  colorTheme: string; // CSS gradient class
 }
 
 export default function HomePage() {
-  const [url, setUrl] = useState<string>("");
-  const [selectedStyle, setSelectedStyle] = useState<string>("1");
-  const [selectedModel, setSelectedModel] = useState<string>(appConfig.ai.defaultModel);
-  const [isValidUrl, setIsValidUrl] = useState<boolean>(false);
-  const [showSearchTiles, setShowSearchTiles] = useState<boolean>(false);
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [hasSearched, setHasSearched] = useState<boolean>(false);
-  const [isFadingOut, setIsFadingOut] = useState<boolean>(false);
-  const [showSelectMessage, setShowSelectMessage] = useState<boolean>(false);
-  const [showInstructionsForIndex, setShowInstructionsForIndex] = useState<number | null>(null);
-  const [additionalInstructions, setAdditionalInstructions] = useState<string>('');
-  const [extendBrandStyles, setExtendBrandStyles] = useState<boolean>(false);
   const router = useRouter();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   
-  // Simple URL validation
-  const validateUrl = (urlString: string) => {
-    if (!urlString) return false;
-    // Basic URL pattern - accepts domains with or without protocol
-    const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
-    return urlPattern.test(urlString.toLowerCase());
-  };
+  // New Project Form States
+  const [modalTab, setModalTab] = useState<"clone" | "scratch">("clone");
+  const [projectName, setProjectName] = useState("");
+  const [targetUrl, setTargetUrl] = useState("");
+  const [selectedStyle, setSelectedStyle] = useState("4"); // Minimalist default
+  const [planningModel, setPlanningModel] = useState("gpt-5.5"); // default TR4 model
+  const [coderModel, setCoderModel] = useState("kimi-k2.7-code"); // default coding model
+  const [additionalInstructions, setAdditionalInstructions] = useState("");
+  
+  // Mock Workspace Projects
+  const [projects, setProjects] = useState<Project[]>([
+    {
+      id: "1",
+      name: "Linear Landing Page",
+      targetUrl: "https://linear.app",
+      style: "Minimalist",
+      planningModel: "google/gemini-3-pro-preview",
+      coderModel: "moonshotai/kimi-k2-instruct-0905",
+      status: "completed",
+      updatedAt: "2 hours ago",
+      colorTheme: "from-indigo-600/30 to-purple-600/10"
+    },
+    {
+      id: "2",
+      name: "Stripe Billing Portal",
+      targetUrl: "https://stripe.com/billing",
+      style: "Glassmorphism",
+      planningModel: "anthropic/claude-sonnet-4-20250514",
+      coderModel: "openai/gpt-5",
+      status: "active",
+      updatedAt: "Yesterday",
+      colorTheme: "from-emerald-600/30 to-teal-600/10"
+    },
+    {
+      id: "3",
+      name: "Vercel Analytics Dashboard",
+      targetUrl: "https://vercel.com/analytics",
+      style: "Dark Mode",
+      planningModel: "google/gemini-3-pro-preview",
+      coderModel: "moonshotai/kimi-k2-instruct-0905",
+      status: "completed",
+      updatedAt: "3 days ago",
+      colorTheme: "from-zinc-700/40 to-neutral-900/20"
+    },
+    {
+      id: "4",
+      name: "Airbnb Search Flow",
+      targetUrl: "https://airbnb.com",
+      style: "Neumorphism",
+      planningModel: "openai/gpt-5",
+      coderModel: "openai/gpt-5",
+      status: "progress",
+      updatedAt: "Last week",
+      colorTheme: "from-rose-500/30 to-orange-600/10"
+    }
+  ]);
 
-  // Check if input is a URL (contains a dot)
-  const isURL = (str: string): boolean => {
-    const urlPattern = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
-    return urlPattern.test(str.trim());
-  };
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.projects) {
+          const dbProjects = data.projects.map((p: any) => ({
+            id: String(p.id),
+            name: p.name,
+            targetUrl: p.target_url,
+            style: p.style,
+            planningModel: p.planning_model,
+            coderModel: p.coder_model,
+            status: p.status || 'active',
+            updatedAt: new Date(p.created_at).toLocaleDateString(),
+            colorTheme: "from-blue-600/30 to-indigo-600/10"
+          }));
+          setProjects(dbProjects);
+        }
+      })
+      .catch(err => console.error("Error loading projects:", err));
+  }, []);
 
   const styles = [
-    { id: "1", name: "Glassmorphism", description: "Frosted glass effect" },
-    { id: "2", name: "Neumorphism", description: "Soft 3D shadows" },
-    { id: "3", name: "Brutalism", description: "Bold and raw" },
-    { id: "4", name: "Minimalist", description: "Clean and simple" },
-    { id: "5", name: "Dark Mode", description: "Dark theme design" },
-    { id: "6", name: "Gradient Rich", description: "Vibrant gradients" },
-    { id: "7", name: "3D Depth", description: "Dimensional layers" },
-    { id: "8", name: "Retro Wave", description: "80s inspired" },
+    { id: "1", name: "Glassmorphism", desc: "Frosted glass and gradients" },
+    { id: "2", name: "Neumorphism", desc: "Soft shadows and 3D depth" },
+    { id: "3", name: "Brutalism", desc: "Bold, raw and high contrast" },
+    { id: "4", name: "Minimalist", desc: "Clean layout, elegant typography" },
+    { id: "5", name: "Dark Mode", desc: "Sleek and aesthetic dark theme" },
+    { id: "6", name: "Gradient Rich", desc: "Vibrant colors and animation" }
   ];
 
-  const models = appConfig.ai.availableModels.map(model => ({
-    id: model,
-    name: appConfig.ai.modelDisplayNames[model] || model,
+  const models = appConfig.ai.availableModels.map(m => ({
+    id: m,
+    name: appConfig.ai.modelDisplayNames[m] || m
   }));
 
-  const handleSubmit = async (selectedResult?: SearchResult) => {
-    const inputValue = url.trim();
+  const validateUrl = (urlString: string) => {
+    if (!urlString) return false;
+    const urlPattern = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
+    return urlPattern.test(urlString.trim());
+  };
 
-    if (!inputValue) {
-      toast.error("Please enter a URL or search term");
+  const handleLaunchProject = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!projectName.trim()) {
+      toast.error("Please enter a project name");
       return;
     }
 
-    // Validate brand extension mode requirements
-    if (extendBrandStyles && isURL(inputValue) && !additionalInstructions.trim()) {
-      toast.error("Please describe what you want to build with this brand's styles");
-      return;
-    }
+    const finalUrl = modalTab === "clone" ? targetUrl.trim() : "scratch://new-project";
     
-    // If it's a search result being selected, fade out and redirect
-    if (selectedResult) {
-      setIsFadingOut(true);
-      
-      // Wait for fade animation
-      setTimeout(() => {
-        sessionStorage.setItem('targetUrl', selectedResult.url);
-        sessionStorage.setItem('selectedStyle', selectedStyle);
-        sessionStorage.setItem('selectedModel', selectedModel);
-        sessionStorage.setItem('autoStart', 'true');
-        if (selectedResult.markdown) {
-          sessionStorage.setItem('siteMarkdown', selectedResult.markdown);
-        }
-        router.push('/generation');
-      }, 500);
-      return;
-    }
-    
-    // If it's a URL, check if we're extending brand styles or cloning
-    if (isURL(inputValue)) {
-      if (extendBrandStyles) {
-        // Brand extension mode - extract brand styles and use them with the prompt
-        sessionStorage.setItem('targetUrl', inputValue);
-        sessionStorage.setItem('selectedModel', selectedModel);
-        sessionStorage.setItem('autoStart', 'true');
-        sessionStorage.setItem('brandExtensionMode', 'true');
-        sessionStorage.setItem('brandExtensionPrompt', additionalInstructions || '');
-        router.push('/generation');
-      } else {
-        // Normal clone mode
-        sessionStorage.setItem('targetUrl', inputValue);
-        sessionStorage.setItem('selectedStyle', selectedStyle);
-        sessionStorage.setItem('selectedModel', selectedModel);
-        sessionStorage.setItem('autoStart', 'true');
-        router.push('/generation');
+    if (modalTab === "clone") {
+      if (!finalUrl || !validateUrl(finalUrl)) {
+        toast.error("Please enter a valid URL (e.g., https://example.com)");
+        return;
       }
     } else {
-      // It's a search term, fade out if results exist, then search
-      if (hasSearched && searchResults.length > 0) {
-        setIsFadingOut(true);
-        
-        setTimeout(async () => {
-          setSearchResults([]);
-          setIsFadingOut(false);
-          setShowSelectMessage(true);
-          
-          // Perform new search
-          await performSearch(inputValue);
-          setHasSearched(true);
-          setShowSearchTiles(true);
-          setShowSelectMessage(false);
-          
-          // Smooth scroll to carousel
-          setTimeout(() => {
-            const carouselSection = document.querySelector('.carousel-section');
-            if (carouselSection) {
-              carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }, 300);
-        }, 500);
-      } else {
-        // First search, no fade needed
-        setShowSelectMessage(true);
-        setIsSearching(true);
-        setHasSearched(true);
-        setShowSearchTiles(true);
-        
-        // Scroll to carousel area immediately
-        setTimeout(() => {
-          const carouselSection = document.querySelector('.carousel-section');
-          if (carouselSection) {
-            carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
-        
-        await performSearch(inputValue);
-        setShowSelectMessage(false);
-        setIsSearching(false);
-        
-        // Smooth scroll to carousel
-        setTimeout(() => {
-          const carouselSection = document.querySelector('.carousel-section');
-          if (carouselSection) {
-            carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 300);
+      if (!additionalInstructions.trim()) {
+        toast.error("Please describe what you would like to build");
+        return;
       }
     }
+
+    sessionStorage.removeItem("projectId"); // Clear any previous project ID for new creations
+    sessionStorage.setItem("targetUrl", finalUrl);
+    sessionStorage.setItem("selectedStyle", selectedStyle);
+    sessionStorage.setItem("selectedModel", coderModel);
+    sessionStorage.setItem("selectedPlanningModel", planningModel);
+    sessionStorage.setItem("selectedCoderModel", coderModel);
+    sessionStorage.setItem("projectName", projectName.trim());
+    sessionStorage.setItem("additionalInstructions", additionalInstructions.trim());
+    sessionStorage.setItem("autoStart", "true");
+
+    toast.success(modalTab === "clone" ? "Initializing website clone..." : "Initializing blank project from scratch...");
+    router.push("/generation");
   };
 
-  // Perform search when user types
-  const performSearch = async (searchQuery: string) => {
-    if (!searchQuery.trim() || isURL(searchQuery)) {
-      setSearchResults([]);
-      setShowSearchTiles(false);
-      return;
-    }
-
-    setIsSearching(true);
-    setShowSearchTiles(true);
-    try {
-      const response = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSearchResults(data.results || []);
-        setShowSearchTiles(true);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setIsSearching(false);
-    }
+  const openExistingProject = (project: Project) => {
+    sessionStorage.setItem("projectId", project.id);
+    sessionStorage.setItem("targetUrl", project.targetUrl);
+    sessionStorage.setItem("selectedStyle", project.style.toLowerCase());
+    sessionStorage.setItem("selectedModel", project.coderModel);
+    sessionStorage.setItem("selectedPlanningModel", project.planningModel);
+    sessionStorage.setItem("selectedCoderModel", project.coderModel);
+    sessionStorage.setItem("projectName", project.name);
+    sessionStorage.setItem("autoStart", "true");
+    
+    toast.success(`Resuming project: ${project.name}`);
+    router.push("/generation");
   };
+
+  const filteredProjects = projects.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.targetUrl.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
-    <HeaderProvider>
-      <div className="min-h-screen bg-background-base">
-        {/* Header/Navigation Section */}
-        <HeaderDropdownWrapper />
-
-        <div className="sticky top-0 left-0 w-full z-[101] bg-background-base header">
-          <div className="absolute top-0 cmw-container border-x border-border-faint h-full pointer-events-none" />
-          <div className="h-1 bg-border-faint w-full left-0 -bottom-1 absolute" />
-          <div className="cmw-container absolute h-full pointer-events-none top-0">
-            <Connector className="absolute -left-[10.5px] -bottom-11" />
-            <Connector className="absolute -right-[10.5px] -bottom-11" />
+    <div 
+      className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased"
+      style={{ display: "flex", minHeight: "100vh" }}
+    >
+      {/* FIXED WIDTH SIDEBAR */}
+      <aside 
+        className="bg-neutral-900/60 border-r border-neutral-900 flex flex-col justify-between"
+        style={{ width: "260px", minWidth: "260px", flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}
+      >
+        <div>
+          {/* Logo & Brand */}
+          <div className="p-20 border-b border-neutral-800/80 flex items-center gap-12">
+            <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center font-bold text-white shadow-lg shadow-orange-600/35 flex-shrink-0">
+              G
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold tracking-tight text-white truncate">G Studio</h1>
+              <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-bold block">Enterprise Workspace</span>
+            </div>
           </div>
 
-          <HeaderWrapper>
-            <div className="max-w-[900px] mx-auto w-full flex justify-between items-center">
-              <div className="flex gap-24 items-center">
-                <HeaderBrandKit />
-              </div>
-              <div className="flex gap-8">
-                <a
-                  className="contents"
-                  href="https://github.com/mendableai/open-lovable"
-                  target="_blank"
-                >
-                  <ButtonUI variant="tertiary">
-                    <GithubIcon />
-                    Use this Template
-                  </ButtonUI>
-                </a>
-              </div>
-            </div>
-          </HeaderWrapper>
+          {/* Navigation Menu */}
+          <nav className="p-12 space-y-4">
+            <button className="w-full flex items-center gap-10 px-12 py-10 rounded-lg text-xs font-semibold bg-neutral-800/80 text-white transition-all">
+              <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              My Projects
+            </button>
+            <button className="w-full flex items-center gap-10 px-12 py-10 rounded-lg text-xs font-semibold text-neutral-500 transition-all cursor-not-allowed" disabled>
+              <svg className="w-4 h-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Team Collaborators
+              <span className="text-[9px] bg-neutral-900 border border-neutral-800/80 text-neutral-600 px-6 py-1 rounded ml-auto font-bold">Mock</span>
+            </button>
+            <button className="w-full flex items-center gap-10 px-12 py-10 rounded-lg text-xs font-semibold text-neutral-500 transition-all cursor-not-allowed" disabled>
+              <svg className="w-4 h-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              </svg>
+              Workspace Settings
+            </button>
+          </nav>
         </div>
 
-        {/* Hero Section */}
-        <section className="overflow-x-clip" id="home-hero">
-          <div className="pt-28 lg:pt-254 lg:-mt-100 pb-115 relative" id="hero-content">
-            <HomeHeroPixi />
-            <HeroFlame />
-            <BackgroundOuterPiece />
-            <HomeHeroBackground />
+        {/* User Card at Footer */}
+        <div className="p-12 border-t border-neutral-800/80">
+          <div className="flex items-center gap-10 bg-neutral-900/80 p-8 rounded-lg border border-neutral-800/40">
+            <div className="w-7 h-7 rounded-full bg-neutral-800 flex items-center justify-center font-bold text-neutral-400 text-xs">
+              D
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-bold text-neutral-200 truncate">Developer</p>
+              <p className="text-[9px] text-neutral-500 truncate">corp@company.internal</p>
+            </div>
+          </div>
+        </div>
+      </aside>
 
-            <div className="relative container px-16">
-              <HomeHeroBadge />
-              <HomeHeroTitle />
-              <p className="text-center text-body-large">
-                Clone brand format or re-imagine any website, in seconds.
-              </p>
-              <Link
-                className="bg-black-alpha-4 hover:bg-black-alpha-6 rounded-6 px-8 lg:px-6 text-label-large h-30 lg:h-24 block mt-8 mx-auto w-max gap-4 transition-all"
-                href="#"
-                onClick={(e) => e.preventDefault()}
-              >
-                Powered by Firecrawl.
-              </Link>
+      {/* MAIN DASHBOARD */}
+      <main 
+        className="flex flex-col min-w-0" 
+        style={{ flex: 1, minWidth: 0, height: "100vh", overflowY: "auto" }}
+      >
+        {/* Header bar */}
+        <header className="h-16 border-b border-neutral-900 flex items-center justify-between px-24 bg-neutral-950/20 backdrop-blur sticky top-0 z-[10]">
+          <div className="flex-1 max-w-xs">
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search projects..."
+                className="w-full bg-neutral-900/60 border border-neutral-800/80 rounded-lg py-6 pl-28 pr-12 text-xs font-semibold placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700 text-white transition-all"
+              />
+              <svg className="w-3.5 h-3.5 text-neutral-600 absolute left-8 top-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
           </div>
 
-          {/* Mini Playground Input */}
-          <div className="container lg:contents !p-16 relative -mt-90">
-            <div className="absolute top-0 left-[calc(50%-50vw)] w-screen h-1 bg-border-faint lg:hidden" />
-            <div className="absolute bottom-0 left-[calc(50%-50vw)] w-screen h-1 bg-border-faint lg:hidden" />
-            <Connector className="-top-10 -left-[10.5px] lg:hidden" />
-            <Connector className="-top-10 -right-[10.5px] lg:hidden" />
-            <Connector className="-bottom-10 -left-[10.5px] lg:hidden" />
-            <Connector className="-bottom-10 -right-[10.5px] lg:hidden" />
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-6 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs px-12 py-8 rounded-lg shadow-md shadow-orange-600/10 active:scale-[0.98] transition-all"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New Project
+          </button>
+        </header>
 
-            {/* Hero Input Component */}
-            <div className="max-w-552 mx-auto z-[11] lg:z-[2]">
-              <div className="rounded-20 -mt-30 lg:-mt-30">
+        {/* Dashboard Content */}
+        <div className="p-24 md:p-32 max-w-[1100px] w-full mx-auto">
+          <div className="flex items-baseline justify-between mb-20">
+            <div>
+              <h2 className="text-lg font-bold text-white tracking-tight">Active Projects</h2>
+              <p className="text-xs text-neutral-500 mt-2">Manage and iterate on company web applications built from scraped resources.</p>
+            </div>
+            <span className="text-[10px] bg-neutral-900 border border-neutral-800 text-neutral-400 px-8 py-3 rounded-full font-bold">
+              {filteredProjects.length} Projects
+            </span>
+          </div>
+
+          {filteredProjects.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-16">
+              {filteredProjects.map(project => (
                 <div
-                  className="bg-white rounded-20 relative z-10"
-                  style={{
-                    boxShadow:
-                      "0px 0px 44px 0px rgba(0, 0, 0, 0.02), 0px 88px 56px -20px rgba(0, 0, 0, 0.03), 0px 56px 56px -20px rgba(0, 0, 0, 0.02), 0px 32px 32px -20px rgba(0, 0, 0, 0.03), 0px 16px 24px -12px rgba(0, 0, 0, 0.03), 0px 0px 0px 1px rgba(0, 0, 0, 0.05), 0px 0px 0px 10px #F9F9F9",
-                  }}
+                  key={project.id}
+                  onClick={() => openExistingProject(project)}
+                  className="group bg-neutral-900/30 border border-neutral-900 hover:border-neutral-800 rounded-xl overflow-hidden cursor-pointer hover:shadow-lg hover:shadow-black/20 transition-all duration-300 flex flex-col"
                 >
-
-                <div className="p-[28px] flex gap-12 items-center w-full relative bg-white rounded-20">
-                  {/* Show different UI when search results are displayed */}
-                  {hasSearched && searchResults.length > 0 && !isFadingOut ? (
-                    <>
-                      {/* Selection mode icon */}
-                      <svg 
-                        width="20" 
-                        height="20" 
-                        viewBox="0 0 20 20" 
-                        fill="none" 
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="opacity-40 flex-shrink-0"
-                      >
-                        <rect x="2" y="4" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                        <rect x="11" y="4" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                        <rect x="2" y="11" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                        <rect x="11" y="11" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                      </svg>
-                      
-                      {/* Selection message */}
-                      <div className="flex-1 text-body-input text-accent-black">
-                        Select which site to clone from the results below
+                  {/* CSS Browser Window Mockup (Replaces placehold.co images) */}
+                  <div className="relative w-full h-[120px] bg-neutral-950 border-b border-neutral-900 flex flex-col">
+                    {/* Browser Mock Top Bar */}
+                    <div className="h-8 bg-neutral-900/70 border-b border-neutral-950 flex items-center px-12 justify-between flex-shrink-0">
+                      {/* Window Controls */}
+                      <div className="flex gap-4">
+                        <span className="w-2.5 h-2.5 rounded-full bg-neutral-800 group-hover:bg-red-500/80 transition-colors" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-neutral-800 group-hover:bg-amber-500/80 transition-colors" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-neutral-800 group-hover:bg-emerald-500/80 transition-colors" />
                       </div>
                       
-                      {/* Search again button */}
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setIsFadingOut(true);
-                          setTimeout(() => {
-                            setSearchResults([]);
-                            setHasSearched(false);
-                            setShowSearchTiles(false);
-                            setIsFadingOut(false);
-                            setUrl('');
-                          }, 500);
-                        }}
-                        className="button relative rounded-10 px-12 py-8 text-label-medium font-medium flex items-center justify-center gap-6 bg-gray-100 hover:bg-gray-200 text-gray-700 active:scale-[0.995] transition-all"
-                      >
-                        <svg 
-                          width="16" 
-                          height="16" 
-                          viewBox="0 0 16 16" 
-                          fill="none" 
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="opacity-60"
-                        >
-                          <path d="M14 14L10 10M11 6.5C11 9 9 11 6.5 11C4 11 2 9 2 6.5C2 4 4 2 6.5 2C9 2 11 4 11 6.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                        <span>Search Again</span>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      {isURL(url) ? (
-                        // Scrape icon for URLs
-                        <svg 
-                          width="20" 
-                          height="20" 
-                          viewBox="0 0 20 20" 
-                          fill="none" 
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="opacity-40 flex-shrink-0"
-                        >
-                          <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M7 10L9 12L13 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      ) : (
-                        // Search icon for search terms
-                        <svg 
-                          width="20" 
-                          height="20" 
-                          viewBox="0 0 20 20" 
-                          fill="none" 
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="opacity-40 flex-shrink-0"
-                        >
-                          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M12.5 12.5L16.5 16.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                      )}
-                      <input
-                        className="flex-1 bg-transparent text-body-input text-accent-black placeholder:text-black-alpha-48 focus:outline-none focus:ring-0 focus:border-transparent"
-                        placeholder="Enter URL or search term..."
-                        type="text"
-                        value={url}
-                        disabled={isSearching}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setUrl(value);
-                          setIsValidUrl(validateUrl(value));
-                          // Reset search state when input changes
-                          if (value.trim() === "") {
-                            setShowSearchTiles(false);
-                            setHasSearched(false);
-                            setSearchResults([]);
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !isSearching) {
-                            e.preventDefault();
-                            handleSubmit();
-                          }
-                        }}
-                        onFocus={() => {
-                          if (url.trim() && !isURL(url) && searchResults.length > 0) {
-                            setShowSearchTiles(true);
-                          }
-                        }}
-                      />
-                      <div
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (!isSearching) {
-                            handleSubmit();
-                          }
-                        }}
-                        className={isSearching ? 'pointer-events-none' : ''}
-                      >
-                        <HeroInputSubmitButton 
-                          dirty={url.length > 0} 
-                          buttonText={isURL(url) ? 'Scrape Site' : 'Search'} 
-                          disabled={isSearching}
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Options Section - Only show when valid URL */}
-                <div className={`overflow-hidden transition-all duration-500 ease-in-out ${
-                  isValidUrl ? (extendBrandStyles ? 'max-h-[400px]' : 'max-h-[300px]') + ' opacity-100' : 'max-h-0 opacity-0'
-                }`}>
-                  <div className="px-[28px] pt-0 pb-[28px]">
-                    <div className="border-t border-gray-100 bg-white">
-                      {/* Extend Brand Styles Toggle */}
-                      <div className={`transition-all duration-300 transform ${
-                        isValidUrl ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
-                      }`} style={{ transitionDelay: '50ms' }}>
-                        <div className="py-8 grid grid-cols-2 items-center gap-12 group cursor-pointer" onClick={() => setExtendBrandStyles(!extendBrandStyles)}>
-                          <div className="flex select-none">
-                            <div className="flex lg-max:flex-col whitespace-nowrap flex-wrap min-w-0 gap-8 lg:justify-between flex-1">
-                              <div className="text-xs font-medium text-black-alpha-72 transition-all group-hover:text-accent-black relative">
-                                Extend brand styles
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex justify-end">
-                            <button
-                              className="transition-all relative rounded-full group bg-black-alpha-10"
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExtendBrandStyles(!extendBrandStyles);
-                              }}
-                              style={{
-                                width: '50px',
-                                height: '20px',
-                                boxShadow: 'rgba(0, 0, 0, 0.02) 0px 6px 12px 0px inset, rgba(0, 0, 0, 0.02) 0px 0.75px 0.75px 0px inset, rgba(0, 0, 0, 0.04) 0px 0.25px 0.25px 0px inset'
-                              }}
-                            >
-                              <div
-                                className={`overlay transition-opacity ${extendBrandStyles ? 'opacity-100' : 'opacity-0'}`}
-                                style={{ background: 'color(display-p3 0.9059 0.3294 0.0784)', backgroundColor: '#FA4500' }}
-                              />
-                              <div
-                                className="top-[2px] left-[2px] transition-all absolute rounded-full bg-accent-white"
-                                style={{
-                                  width: '28px',
-                                  height: '16px',
-                                  boxShadow: 'rgba(0, 0, 0, 0.06) 0px 6px 12px -3px, rgba(0, 0, 0, 0.06) 0px 3px 6px -1px, rgba(0, 0, 0, 0.04) 0px 1px 2px 0px, rgba(0, 0, 0, 0.08) 0px 0.5px 0.5px 0px',
-                                  transform: extendBrandStyles ? 'translateX(16px)' : 'none'
-                                }}
-                              />
-                            </button>
-                          </div>
-                        </div>
+                      {/* Mock URL Path */}
+                      <div className="bg-neutral-950 border border-neutral-800/40 rounded px-16 py-2 text-[9px] text-neutral-500 font-semibold tracking-wide w-44 truncate text-center">
+                        {project.targetUrl.replace(/^https?:\/\//i, "")}
                       </div>
 
-                      {/* Brand Extension Prompt - Show when toggle is enabled */}
-                      {extendBrandStyles && (
-                        <div className="pb-10 transition-all duration-300 opacity-100">
-                          <textarea
-                            value={additionalInstructions}
-                            onChange={(e) => setAdditionalInstructions(e.target.value)}
-                            placeholder="Describe the new functionality you want to build using this brand's styles..."
-                            className="w-full px-4 py-10 text-xs font-medium text-gray-700 bg-gray-50 rounded border border-gray-200 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-400 min-h-[80px] resize-none"
-                          />
-                        </div>
-                      )}
+                      <div className="w-12" /> {/* spacer */}
+                    </div>
 
-                      {/* Style Selector - Hide when brand extension mode is enabled */}
-                      {!extendBrandStyles && (
-                        <div className={`mb-2 transition-all duration-300 transform ${
-                          isValidUrl ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
-                        }`} style={{ transitionDelay: '100ms' }}>
-                          <div className="grid grid-cols-4 gap-2">
-                            {styles.map((style, index) => (
-                              <button
-                                key={style.id}
-                                onClick={() => setSelectedStyle(style.id)}
-                                className={`
-                                  ${selectedStyle === style.id
-                                    ? 'bg-heat-100 hover:bg-heat-200 flex items-center justify-center button relative text-label-medium button-primary group/button rounded-10 p-8 text-accent-white active:scale-[0.995] border-0'
-                                    : 'border-gray-200 hover:border-gray-300 bg-white text-gray-700 py-3.5 px-4 rounded text-xs font-medium border text-center'
-                                  }
-                                  transition-all
-                                  ${isValidUrl ? 'opacity-100' : 'opacity-0'}
-                                `}
-                                style={{
-                                  transitionDelay: `${150 + index * 30}ms`,
-                                  transition: 'all 0.3s ease-in-out'
-                                }}
-                              >
-                                {selectedStyle === style.id && (
-                                  <div className="button-background absolute inset-0 rounded-10 pointer-events-none" />
-                                )}
-                                <span className={selectedStyle === style.id ? 'relative' : ''}>
-                                  {style.name}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                    {/* Stylized Mock Web Content */}
+                    <div className={`flex-1 bg-gradient-to-br ${project.colorTheme} p-12 flex flex-col justify-between relative overflow-hidden`}>
+                      <div className="space-y-4">
+                        <div className="w-16 h-2 rounded bg-white/20" />
+                        <div className="w-28 h-3 rounded bg-white/10" />
+                      </div>
+                      
+                      <div className="flex gap-4 self-end">
+                        <div className="w-10 h-4 rounded bg-white/5" />
+                        <div className="w-8 h-4 rounded bg-white/10" />
+                      </div>
 
-                      {/* Model Selector Dropdown and Additional Instructions */}
-                      <div className={`flex items-center gap-3 mt-2 pb-4 transition-all duration-300 transform ${
-                        isValidUrl ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
-                      }`} style={{ transitionDelay: '400ms' }}>
-                        {/* Model Dropdown */}
-                        <select
-                          value={selectedModel}
-                          onChange={(e) => setSelectedModel(e.target.value)}
-                          className={`px-3 py-2.5 text-xs font-medium text-gray-700 bg-white rounded border border-gray-200 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 ${extendBrandStyles ? 'flex-1' : ''}`}
-                        >
-                          {models.map((model) => (
-                            <option key={model.id} value={model.id}>
-                              {model.name}
-                            </option>
-                          ))}
-                        </select>
+                      {/* Status badge in preview */}
+                      <div className="absolute top-8 right-8">
+                        <span className={`inline-flex items-center gap-4 px-8 py-2 rounded-full text-[9px] font-bold tracking-wide uppercase border ${
+                          project.status === "completed" 
+                            ? "bg-emerald-950/70 border-emerald-900/60 text-emerald-400"
+                            : project.status === "active"
+                            ? "bg-blue-950/70 border-blue-900/60 text-blue-400"
+                            : "bg-amber-950/70 border-amber-900/60 text-amber-400"
+                        }`}>
+                          <span className={`w-1 h-1 rounded-full ${
+                            project.status === "completed" 
+                              ? "bg-emerald-400 animate-pulse" 
+                              : project.status === "active"
+                              ? "bg-blue-400 animate-pulse"
+                              : "bg-amber-400 animate-pulse"
+                          }`} />
+                          {project.status}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
-                        {/* Additional Instructions - Hidden when extend brand styles is enabled */}
-                        {!extendBrandStyles && (
-                          <input
-                            type="text"
-                            className="flex-1 px-3 py-2.5 text-xs font-medium text-gray-700 bg-gray-50 rounded border border-gray-200 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-gray-400"
-                            placeholder="Additional instructions (optional)"
-                            onChange={(e) => sessionStorage.setItem('additionalInstructions', e.target.value)}
-                          />
-                        )}
+                  {/* Card Details (Highly Compact & Beautiful) */}
+                  <div className="p-16 flex-1 flex flex-col justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-white group-hover:text-orange-500 transition-colors truncate">{project.name}</h3>
+                      <p className="text-[10px] text-neutral-500 truncate mt-2">{project.targetUrl}</p>
+                    </div>
+
+                    <div className="mt-12 pt-12 border-t border-neutral-900 space-y-4">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-neutral-500">Style:</span>
+                        <span className="text-neutral-300 font-bold">{project.style}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-neutral-500">Models:</span>
+                        <span className="text-neutral-300 font-bold truncate max-w-[120px]">
+                          {appConfig.ai.modelDisplayNames[project.planningModel]?.replace(/\(.*\)/, "") || "Gemini"} / {appConfig.ai.modelDisplayNames[project.coderModel]?.replace(/\(.*\)/, "") || "Kimi"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[9px] pt-2">
+                        <span className="text-neutral-500">Last updated:</span>
+                        <span className="text-neutral-400">{project.updatedAt}</span>
                       </div>
                     </div>
                   </div>
                 </div>
-
-                </div>
-
-                <div className="h-248 top-84 cw-768 pointer-events-none absolute overflow-clip -z-10">
-                  <AsciiExplosion className="-top-200" />
-                </div>
-              </div>
+              ))}
             </div>
-          </div>
-        </section>
+          ) : (
+            <div className="text-center py-48 border border-dashed border-neutral-800 rounded-xl bg-neutral-900/10">
+              <svg className="w-10 h-10 text-neutral-700 mx-auto mb-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              <h3 className="text-xs font-bold text-white">No projects found</h3>
+              <p className="text-[10px] text-neutral-500 mt-2">Create a new project with scraped source code to begin.</p>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="mt-16 inline-flex items-center gap-6 bg-neutral-900 hover:bg-neutral-805 border border-neutral-800 text-white px-12 py-8 rounded-lg text-[10px] font-semibold"
+              >
+                + New Project
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
 
-        {/* Full-width oval carousel section */}
-        {showSearchTiles && hasSearched && (
-          <section className={`carousel-section relative w-full overflow-hidden mt-32 mb-32 transition-opacity duration-500 ${
-            isFadingOut ? 'opacity-0' : 'opacity-100'
-          }`}>
-            <div className="absolute inset-0 bg-gradient-to-b from-gray-50/50 to-white rounded-[50%] transform scale-x-150 -translate-y-24" />
-            
-            {isSearching ? (
-              // Loading state with animated scrolling skeletons
-              <div className="relative h-[250px] overflow-hidden">
-                {/* Edge fade overlays */}
-                <div className="absolute left-0 top-0 bottom-0 w-[120px] z-20 pointer-events-none" style={{background: 'linear-gradient(to right, white 0%, white 20%, transparent 100%)'}} />
-                <div className="absolute right-0 top-0 bottom-0 w-[120px] z-20 pointer-events-none" style={{background: 'linear-gradient(to left, white 0%, white 20%, transparent 100%)'}} />
-                
-                <div className="carousel-container absolute left-0 flex gap-12 py-4">
-                  {/* Duplicate skeleton tiles for continuous scroll */}
-                  {[...Array(10), ...Array(10)].map((_, index) => (
-                    <div
-                      key={`loading-${index}`}
-                      className="flex-shrink-0 w-[400px] h-[240px] rounded-lg overflow-hidden border-2 border-gray-200/30 bg-white relative"
-                    >
-                      <div className="absolute inset-0 skeleton-shimmer">
-                        <div className="absolute inset-0 bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100 skeleton-gradient" />
-                      </div>
-                      
-                      {/* Fake browser UI - 5x bigger */}
-                      <div className="absolute top-0 left-0 right-0 h-40 bg-gray-100 border-b border-gray-200/50 flex items-center px-6 gap-4">
-                        <div className="flex gap-3">
-                          <div className="w-5 h-5 rounded-full bg-gray-300 animate-pulse" />
-                          <div className="w-5 h-5 rounded-full bg-gray-300 animate-pulse" style={{ animationDelay: '0.1s' }} />
-                          <div className="w-5 h-5 rounded-full bg-gray-300 animate-pulse" style={{ animationDelay: '0.2s' }} />
-                        </div>
-                        <div className="flex-1 h-8 bg-gray-200 rounded-md mx-6 animate-pulse" />
-                      </div>
-                      
-                      {/* Content skeleton - positioned just below nav bar */}
-                      <div className="absolute top-44 left-4 right-4">
-                        <div className="h-3 bg-gray-200 rounded w-3/4 mb-2 animate-pulse" />
-                        <div className="h-3 bg-gray-150 rounded w-1/2 mb-2 animate-pulse" style={{ animationDelay: '0.2s' }} />
-                        <div className="h-3 bg-gray-150 rounded w-2/3 animate-pulse" style={{ animationDelay: '0.3s' }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      {/* CREATE NEW PROJECT MODAL */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-16">
+          <div className="bg-neutral-900 border border-neutral-800 w-full max-w-xl rounded-2xl shadow-2xl shadow-black overflow-hidden flex flex-col animate-scale-up">
+            {/* Modal Header */}
+            <div className="px-20 py-16 border-b border-neutral-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Initialize Enterprise Project</h3>
+                <p className="text-[10px] text-neutral-400 mt-1">Configure models for architectural planning & component coding.</p>
               </div>
-            ) : searchResults.length > 0 ? (
-              // Actual results
-              <div className="relative h-[250px] overflow-hidden">
-                {/* Edge fade overlays */}
-                <div className="absolute left-0 top-0 bottom-0 w-[120px] z-20 pointer-events-none" style={{background: 'linear-gradient(to right, white 0%, white 20%, transparent 100%)'}} />
-                <div className="absolute right-0 top-0 bottom-0 w-[120px] z-20 pointer-events-none" style={{background: 'linear-gradient(to left, white 0%, white 20%, transparent 100%)'}} />
-                
-                <div className="carousel-container absolute left-0 flex gap-12 py-4">
-                  {/* Duplicate results for infinite scroll */}
-                  {[...searchResults, ...searchResults].map((result, index) => (
-                    <div
-                      key={`${result.url}-${index}`}
-                      className="group flex-shrink-0 w-[400px] h-[240px] rounded-lg overflow-hidden border-2 border-gray-200/50 transition-all duration-300 hover:shadow-2xl bg-white relative"
-                      onMouseLeave={() => {
-                        if (showInstructionsForIndex === index) {
-                          setShowInstructionsForIndex(null);
-                          setAdditionalInstructions('');
-                        }
-                      }}
-                    >
-                      {/* Hover overlay with clone buttons or instructions input */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 flex flex-col items-center justify-center p-6">
-                        {showInstructionsForIndex === index ? (
-                          /* Instructions input view - matching main input style exactly */
-                          <div className="w-full max-w-[380px]">
-                            <div className="bg-white rounded-20" style={{
-                              boxShadow: "0px 0px 44px 0px rgba(0, 0, 0, 0.02), 0px 88px 56px -20px rgba(0, 0, 0, 0.03), 0px 56px 56px -20px rgba(0, 0, 0, 0.02), 0px 32px 32px -20px rgba(0, 0, 0, 0.03), 0px 16px 24px -12px rgba(0, 0, 0, 0.03), 0px 0px 0px 1px rgba(0, 0, 0, 0.05)"
-                            }}>
-                              {/* Input area matching main search */}
-                              <div className="p-16 flex gap-12 items-start w-full relative">
-                                {/* Instructions icon */}
-                                <div className="mt-2 flex-shrink-0">
-                                  <svg 
-                                    width="20" 
-                                    height="20" 
-                                    viewBox="0 0 20 20" 
-                                    fill="none" 
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="opacity-40"
-                                  >
-                                    <path d="M5 5H15M5 10H15M5 15H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                                  </svg>
-                                </div>
-                                
-                                <textarea
-                                  value={additionalInstructions}
-                                  onChange={(e) => setAdditionalInstructions(e.target.value)}
-                                  placeholder="Describe your customizations..."
-                                  className="flex-1 bg-transparent text-body-input text-accent-black placeholder:text-black-alpha-48 focus:outline-none focus:ring-0 focus:border-transparent resize-none min-h-[60px]"
-                                  autoFocus
-                                  onClick={(e) => e.stopPropagation()}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Escape') {
-                                      e.stopPropagation();
-                                      setShowInstructionsForIndex(null);
-                                      setAdditionalInstructions('');
-                                    }
-                                  }}
-                                />
-                              </div>
-                              
-                              {/* Divider */}
-                              <div className="border-t border-black-alpha-5" />
-                              
-                              {/* Buttons area matching main style */}
-                              <div className="p-10 flex justify-between items-center">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setShowInstructionsForIndex(null);
-                                    setAdditionalInstructions('');
-                                  }}
-                                  className="button relative rounded-10 px-8 py-8 text-label-medium font-medium flex items-center justify-center bg-black-alpha-4 hover:bg-black-alpha-6 text-black-alpha-48 active:scale-[0.995] transition-all"
-                                >
-                                  <svg 
-                                    width="20" 
-                                    height="20" 
-                                    viewBox="0 0 20 20" 
-                                    fill="none" 
-                                    xmlns="http://www.w3.org/2000/svg"
-                                  >
-                                    <path d="M12 5L7 10L12 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                  </svg>
-                                </button>
-                                
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (additionalInstructions.trim()) {
-                                      sessionStorage.setItem('additionalInstructions', additionalInstructions);
-                                      handleSubmit(result);
-                                    }
-                                  }}
-                                  disabled={!additionalInstructions.trim()}
-                                  className={`
-                                    button relative rounded-10 px-8 py-8 text-label-medium font-medium
-                                    flex items-center justify-center gap-6
-                                    ${additionalInstructions.trim() 
-                                      ? 'button-primary text-accent-white active:scale-[0.995]' 
-                                      : 'bg-black-alpha-4 text-black-alpha-24 cursor-not-allowed'
-                                    }
-                                  `}
-                                >
-                                  {additionalInstructions.trim() && <div className="button-background absolute inset-0 rounded-10 pointer-events-none" />}
-                                  <span className="px-6 relative">Apply & Clone</span>
-                                  <svg 
-                                    width="20" 
-                                    height="20" 
-                                    viewBox="0 0 20 20" 
-                                    fill="none" 
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="relative"
-                                  >
-                                    <path d="M11.6667 4.79163L16.875 9.99994M16.875 9.99994L11.6667 15.2083M16.875 9.99994H3.125" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5"/>
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          /* Default buttons view */
-                          <>
-                            <div className="text-white text-center mb-3">
-                              <p className="text-base font-semibold mb-0.5">{result.title}</p>
-                              <p className="text-[11px] opacity-80">Choose how to clone this site</p>
-                            </div>
-                            
-                            <div className="flex gap-3 justify-center">
-                              {/* Instant Clone Button - Orange/Heat style */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSubmit(result);
-                                }}
-                                className="bg-orange-500 hover:bg-orange-600 flex items-center justify-center button relative text-label-medium button-primary group/button rounded-10 p-8 gap-2 text-white active:scale-[0.995]"
-                              >
-                                <div className="button-background absolute inset-0 rounded-10 pointer-events-none" />
-                                <svg 
-                                  width="20" 
-                                  height="20" 
-                                  viewBox="0 0 20 20" 
-                                  fill="none" 
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="relative"
-                                >
-                                  <path d="M11.6667 4.79163L16.875 9.99994M16.875 9.99994L11.6667 15.2083M16.875 9.99994H3.125" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5"/>
-                                </svg>
-                                <span className="px-6 relative">Instant Clone</span>
-                              </button>
-                              
-                              {/* Instructions Button - Gray style */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShowInstructionsForIndex(index);
-                                  setAdditionalInstructions('');
-                                }}
-                                className="bg-gray-100 hover:bg-gray-200 flex items-center justify-center button relative text-label-medium rounded-10 p-8 gap-2 text-gray-700 active:scale-[0.995]"
-                              >
-                                <svg 
-                                  width="20" 
-                                  height="20" 
-                                  viewBox="0 0 20 20" 
-                                  fill="none" 
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="opacity-60"
-                                >
-                                  <path d="M5 5H15M5 10H15M5 15H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                                  <path d="M14 14L16 16L14 18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                </svg>
-                                <span className="px-6">Add Instructions</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                      
-                      {result.screenshot ? (
-                        <div className="relative w-full h-full">
-                          <Image 
-                            src={result.screenshot} 
-                            alt={result.title}
-                            fill
-                            className="object-cover object-top"
-                            loading="lazy"
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-gray-100 to-gray-50 flex items-center justify-center">
-                          <div className="text-center">
-                            <div className="w-16 h-16 rounded-full bg-gray-200 mx-auto mb-3 flex items-center justify-center">
-                              <svg 
-                                width="32" 
-                                height="32" 
-                                viewBox="0 0 24 24" 
-                                fill="none" 
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="text-gray-400"
-                              >
-                                <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                                <path d="M3 9H21" stroke="currentColor" strokeWidth="1.5"/>
-                                <circle cx="6" cy="6" r="1" fill="currentColor"/>
-                                <circle cx="9" cy="6" r="1" fill="currentColor"/>
-                                <circle cx="12" cy="6" r="1" fill="currentColor"/>
-                              </svg>
-                            </div>
-                            <p className="text-gray-500 text-sm font-medium">{result.title}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="text-neutral-500 hover:text-white p-6 hover:bg-neutral-850 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleLaunchProject} className="p-20 space-y-16 flex-1 overflow-y-auto max-h-[500px]">
+              {/* Segmented Control for Mode selection */}
+              <div className="flex bg-neutral-950 p-4 rounded-lg border border-neutral-850">
+                <button
+                  type="button"
+                  onClick={() => setModalTab("clone")}
+                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
+                    modalTab === "clone"
+                      ? "bg-neutral-800 text-white"
+                      : "text-neutral-500 hover:text-neutral-300"
+                  }`}
+                >
+                  Clone Website
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalTab("scratch")}
+                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
+                    modalTab === "scratch"
+                      ? "bg-neutral-800 text-white"
+                      : "text-neutral-500 hover:text-neutral-300"
+                  }`}
+                >
+                  Build From Scratch
+                </button>
               </div>
-            ) : (
-              // No results state
-              <div className="relative h-[250px] flex items-center justify-center">
-                <div className="text-center">
-                  <div className="mb-4">
-                    <svg className="w-16 h-16 mx-auto text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
+
+              {/* Project Name & Target URL */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                <div className="space-y-4">
+                  <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">Project Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={projectName}
+                    onChange={e => setProjectName(e.target.value)}
+                    placeholder={modalTab === "clone" ? "Acme UI Portal" : "Acme Todo App"}
+                    className="w-full bg-neutral-950 border border-neutral-805 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700 text-white"
+                  />
+                </div>
+                {modalTab === "clone" ? (
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">URL to Scrape & Clone</label>
+                    <input
+                      type="text"
+                      required
+                      value={targetUrl}
+                      onChange={e => setTargetUrl(e.target.value)}
+                      placeholder="https://example.com"
+                      className="w-full bg-neutral-950 border border-neutral-850 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700 text-white"
+                    />
                   </div>
-                  <p className="text-gray-500 text-lg">No results found</p>
-                  <p className="text-gray-400 text-sm mt-1">Try a different search term</p>
+                ) : (
+                  <div className="space-y-4 flex flex-col justify-end">
+                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">Blank Canvas Mode</label>
+                    <div className="bg-neutral-950 border border-neutral-850 rounded-lg px-10 py-8 text-xs font-semibold text-neutral-500 italic">
+                      Bypassing scraper - creating a clean canvas
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* TASK-SPECIFIC MODEL SELECTORS */}
+              <div className="bg-neutral-950 p-12 rounded-xl border border-neutral-850 space-y-12">
+                <div className="flex items-center gap-6 pb-6 border-b border-neutral-900">
+                  <svg className="w-3.5 h-3.5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  </svg>
+                  <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-wide">Custom Model Roles</span>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                  {/* Planning model */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-baseline">
+                      <label className="text-[9px] font-semibold text-neutral-400">1. Intent / Planning Model</label>
+                      <span className="text-[8px] bg-neutral-900 text-neutral-500 px-4 py-1 rounded font-bold uppercase">Architect</span>
+                    </div>
+                    <select
+                      value={planningModel}
+                      onChange={e => setPlanningModel(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-8 py-6 text-xs font-semibold focus:outline-none focus:border-neutral-700 text-white"
+                    >
+                      {models.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Coder model */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-baseline">
+                      <label className="text-[9px] font-semibold text-neutral-400">2. Coder / Worker Model</label>
+                      <span className="text-[8px] bg-neutral-900 text-neutral-500 px-4 py-1 rounded font-bold uppercase">Developer</span>
+                    </div>
+                    <select
+                      value={coderModel}
+                      onChange={e => setCoderModel(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-8 py-6 text-xs font-semibold focus:outline-none focus:border-neutral-700 text-white"
+                    >
+                      {models.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
-            )}
-          </section>
-        )}
 
-      </div>
+              {/* Design System Style Selector */}
+              <div className="space-y-6">
+                <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">Core Design Style Preference</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                  {styles.map(style => (
+                    <div
+                      key={style.id}
+                      onClick={() => setSelectedStyle(style.id)}
+                      className={`cursor-pointer p-8 border rounded-lg transition-all ${
+                        selectedStyle === style.id
+                          ? "bg-orange-950/20 border-orange-700 text-white"
+                          : "bg-neutral-950 border-neutral-850 text-neutral-400 hover:border-neutral-800"
+                      }`}
+                    >
+                      <div className="text-[11px] font-bold">{style.name}</div>
+                      <div className="text-[9px] opacity-70 mt-2 leading-tight">{style.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-      <style jsx>{`
-        @keyframes infiniteScroll {
-          from {
-            transform: translateX(0);
-          }
-          to {
-            transform: translateX(-50%);
-          }
-        }
+              {/* Additional Instructions */}
+              <div className="space-y-4">
+                <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">
+                  {modalTab === "clone" ? "Additional Specifications" : "What would you like to build? (Required)"}
+                </label>
+                <textarea
+                  required={modalTab === "scratch"}
+                  value={additionalInstructions}
+                  onChange={e => setAdditionalInstructions(e.target.value)}
+                  placeholder={
+                    modalTab === "clone"
+                      ? "e.g. Integrate responsive menu, add state management with Zustand, etc."
+                      : "Describe your app, e.g. A crypto dashboard with 3 chart tabs, mock transactions history, and a modern layout."
+                  }
+                  className="w-full bg-neutral-950 border border-neutral-850 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700 text-white min-h-[80px] resize-none"
+                />
+              </div>
 
-        @keyframes shimmer {
-          0% {
-            transform: translateX(-100%);
-          }
-          100% {
-            transform: translateX(100%);
-          }
-        }
-
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .carousel-container {
-          animation: infiniteScroll 30s linear infinite;
-        }
-
-        .carousel-container:hover {
-          animation-play-state: paused;
-        }
-
-        .skeleton-shimmer {
-          position: relative;
-          overflow: hidden;
-        }
-
-        .skeleton-gradient {
-          animation: shimmer 2s infinite;
-        }
-      `}</style>
-    </HeaderProvider>
+              {/* Modal Footer Actions */}
+              <div className="pt-12 border-t border-neutral-800 flex justify-end gap-10">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-12 py-8 border border-neutral-800 bg-transparent hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-lg text-xs font-medium transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-16 py-8 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold shadow-md shadow-orange-600/10 active:scale-[0.98] transition-all"
+                >
+                  Launch Project
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

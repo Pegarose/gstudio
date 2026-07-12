@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import { Inter, Roboto_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 
-const inter = Inter({ 
-  subsets: ["latin"],
-  variable: "--font-inter"
-});
+const inter = {
+  variable: "font-sans"
+};
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -20,13 +18,12 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
-const robotoMono = Roboto_Mono({
-  subsets: ["latin"],
-  variable: "--font-roboto-mono",
-});
+const robotoMono = {
+  variable: "font-mono"
+};
 
 export const metadata: Metadata = {
-  title: "Open Lovable v3",
+  title: "G Studio",
   description: "Re-imagine any website in seconds with AI-powered website builder.",
 };
 

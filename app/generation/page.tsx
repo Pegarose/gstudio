@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import Image from 'next/image';
 import { appConfig } from '@/config/app.config';
 import HeroInput from '@/components/HeroInput';
@@ -82,6 +83,18 @@ function AISandboxPage() {
     const modelParam = searchParams.get('model');
     return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
   });
+  const [planningModel, setPlanningModel] = useState(() => {
+    const planningParam = searchParams.get('planningModel');
+    return appConfig.ai.availableModels.includes(planningParam || '') ? planningParam! : appConfig.ai.defaultModel;
+  });
+  const [coderModel, setCoderModel] = useState(() => {
+    const coderParam = searchParams.get('coderModel');
+    return appConfig.ai.availableModels.includes(coderParam || '') ? coderParam! : appConfig.ai.defaultModel;
+  });
+  const [qaModel, setQaModel] = useState(() => {
+    const qaParam = searchParams.get('qaModel');
+    return appConfig.ai.availableModels.includes(qaParam || '') ? qaParam! : appConfig.ai.defaultModel;
+  });
   const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlStatus, setUrlStatus] = useState<string[]>([]);
@@ -92,6 +105,25 @@ function AISandboxPage() {
   const [homeUrlInput, setHomeUrlInput] = useState('');
   const [homeContextInput, setHomeContextInput] = useState('');
   const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('preview');
+  
+  // Premium Workspace Controls State
+  const [generationMode, setGenerationMode] = useState<'build' | 'plan'>('build');
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [historyLog, setHistoryLog] = useState<Array<{ id: number; version_title: string; created_at: string }>>([]);
+  const [seoAuditing, setSeoAuditing] = useState(false);
+  const [seoResult, setSeoResult] = useState<{
+    title: string;
+    metaDesc: string;
+    viewport: string;
+    h1Count: number;
+    imagesWithoutAlt: number;
+    score: number;
+  } | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
+  
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
   const [showLoadingBackground, setShowLoadingBackground] = useState(false);
@@ -126,6 +158,8 @@ function AISandboxPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
+  const activeGenerationStreamRef = useRef<AbortController | null>(null);
+  const activeApplyStreamRef = useRef<AbortController | null>(null);
   
   const [codeApplicationState, setCodeApplicationState] = useState<CodeApplicationState>({
     stage: null
@@ -159,6 +193,7 @@ function AISandboxPage() {
 
   // Store flag to trigger generation after component mounts
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   // Clear old conversation data on component mount and create/restore sandbox
   useEffect(() => {
@@ -178,6 +213,9 @@ function AISandboxPage() {
       const storedUrl = urlParam || sessionStorage.getItem('targetUrl');
       const storedStyle = templateParam || sessionStorage.getItem('selectedStyle');
       const storedModel = sessionStorage.getItem('selectedModel');
+      const storedPlanningModel = sessionStorage.getItem('selectedPlanningModel');
+      const storedCoderModel = sessionStorage.getItem('selectedCoderModel');
+      const storedQaModel = sessionStorage.getItem('selectedQaModel');
       const storedInstructions = sessionStorage.getItem('additionalInstructions');
       
       if (storedUrl) {
@@ -188,12 +226,61 @@ function AISandboxPage() {
         sessionStorage.removeItem('targetUrl');
         sessionStorage.removeItem('selectedStyle');
         sessionStorage.removeItem('selectedModel');
+        sessionStorage.removeItem('selectedPlanningModel');
+        sessionStorage.removeItem('selectedCoderModel');
+        sessionStorage.removeItem('selectedQaModel');
         sessionStorage.removeItem('additionalInstructions');
         // Note: Don't clear siteMarkdown here, it will be cleared when used
         
         // Set the values in the component state
         setHomeUrlInput(storedUrl);
         setSelectedStyle(storedStyle || 'modern');
+        if (storedPlanningModel) setPlanningModel(storedPlanningModel);
+        if (storedCoderModel) setCoderModel(storedCoderModel);
+        if (storedQaModel) setQaModel(storedQaModel);
+
+        // Register or load project in PostgreSQL database
+        const storedProjectId = sessionStorage.getItem('projectId');
+        if (storedProjectId) {
+          const pid = Number(storedProjectId);
+          setActiveProjectId(pid);
+          console.log('[database] Re-using existing project ID:', pid);
+          fetch(`/api/projects/${pid}`)
+            .then(res => res.json())
+            .then(data => {
+              if (data.success && data.project) {
+                if (data.project.planning_model) setPlanningModel(data.project.planning_model);
+                if (data.project.coder_model) setCoderModel(data.project.coder_model);
+                if (data.project.qa_model) setQaModel(data.project.qa_model);
+              }
+            })
+            .catch(err => console.error('[database] Failed to load project models:', err));
+        } else {
+          const projectNameStr = sessionStorage.getItem('projectName') || 'New Project';
+          fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: projectNameStr,
+              targetUrl: storedUrl,
+              style: storedStyle || '',
+              planningModel: storedPlanningModel || planningModel || '',
+              coderModel: storedCoderModel || coderModel || '',
+              qaModel: storedQaModel || qaModel || ''
+            })
+          })
+            .then(res => res.json())
+            .then(regData => {
+              if (regData.success && regData.project) {
+                setActiveProjectId(regData.project.id);
+                console.log('[database] Project registered with ID:', regData.project.id);
+                if (regData.project.planning_model) setPlanningModel(regData.project.planning_model);
+                if (regData.project.coder_model) setCoderModel(regData.project.coder_model);
+                if (regData.project.qa_model) setQaModel(regData.project.qa_model);
+              }
+            })
+            .catch(dbErr => console.error('[database] Failed to register project:', dbErr));
+        }
         
         // Add details to context if provided
         if (detailsParam) {
@@ -233,16 +320,27 @@ function AISandboxPage() {
         if (storedModel) {
           setAiModel(storedModel);
         }
+        if (storedPlanningModel) {
+          setPlanningModel(storedPlanningModel);
+        }
+        if (storedCoderModel) {
+          setCoderModel(storedCoderModel);
+        }
         
         // Skip the home screen and go directly to builder
         setShowHomeScreen(false);
         setHomeScreenFading(false);
         
-        // Set flag to auto-trigger generation after component updates
-        setShouldAutoGenerate(true);
-        
-        // Also set autoStart flag for the effect
-        sessionStorage.setItem('autoStart', 'true');
+        if (!storedProjectId) {
+          // Set flag to auto-trigger generation after component updates
+          setShouldAutoGenerate(true);
+          
+          // Also set autoStart flag for the effect
+          sessionStorage.setItem('autoStart', 'true');
+        } else {
+          // Resuming an existing project - do not trigger new generation
+          sessionStorage.removeItem('autoStart');
+        }
       }
       
       // Clear old conversation
@@ -280,7 +378,7 @@ function AISandboxPage() {
         }
         
         // If we have a URL from the home page, mark for automatic start
-        if (storedUrl && isMounted) {
+        if (storedUrl && isMounted && !sessionStorage.getItem('projectId')) {
           // We'll trigger the generation after the component is fully mounted
           // and the startGeneration function is defined
           sessionStorage.setItem('autoStart', 'true');
@@ -320,6 +418,69 @@ function AISandboxPage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showHomeScreen]);
+
+  // Premium controls key listeners & postMessage handlers
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.altKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setGenerationMode(prev => {
+          const next = prev === 'build' ? 'plan' : 'build';
+          toast.info(`Switched to ${next === 'build' ? 'Build Mode' : 'Plan Mode'}`);
+          return next;
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const handleIframeMessage = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'ELEMENT_SELECTED') {
+        const promptTemplate = `Modify the ${e.data.tag} element containing: "${e.data.text}" `;
+        setAiChatInput(promptTemplate);
+        toast.info(`Selected element: ${e.data.tag}`);
+      }
+      
+      if (e.data && e.data.type === 'SEO_AUDIT_RESULTS') {
+        const { title, metaDesc, viewport, h1Count, imagesWithoutAlt } = e.data;
+        let score = 100;
+        if (!title) score -= 25;
+        if (!metaDesc) score -= 25;
+        if (!viewport) score -= 20;
+        if (h1Count !== 1) score -= 15;
+        if (imagesWithoutAlt > 0) score -= Math.min(15, imagesWithoutAlt * 5);
+        
+        setSeoResult({
+          title,
+          metaDesc,
+          viewport,
+          h1Count,
+          imagesWithoutAlt,
+          score: Math.max(0, score)
+        });
+        setSeoAuditing(false);
+        toast.success("SEO Audit completed!");
+      }
+    };
+    
+    window.addEventListener('message', handleIframeMessage);
+    return () => window.removeEventListener('message', handleIframeMessage);
+  }, []);
+
+  // Sync inspector state to iframe
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (iframeRef.current && iframeRef.current.contentWindow) {
+        iframeRef.current.contentWindow.postMessage({
+          type: 'TOGGLE_INSPECTOR',
+          active: inspecting
+        }, '*');
+      }
+    }, 1000); // Small timeout to ensure iframe loading has stabilized
+    return () => clearTimeout(timer);
+  }, [inspecting, activeTab, sandboxData]);
   
   // Start capturing screenshot if URL is provided on mount (from home screen)
   useEffect(() => {
@@ -527,6 +688,66 @@ function AISandboxPage() {
     }
   };
 
+  const restoreLatestVersion = async (projectId: number, sId: string) => {
+    setIsRestoring(true);
+    updateStatus('Restoring project files...', false);
+    try {
+      console.log(`[restore] Fetching versions for project ${projectId}...`);
+      const res = await fetch(`/api/projects/${projectId}/versions`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.versions && data.versions.length > 0) {
+          const latestVersion = data.versions[0];
+          console.log(`[restore] Restoring latest version: ${latestVersion.version_title} (ID: ${latestVersion.id})`);
+          
+          const revRes = await fetch(`/api/projects/${projectId}/versions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'revert',
+              versionId: latestVersion.id
+            })
+          });
+          
+          if (revRes.ok) {
+            const revData = await revRes.json();
+            if (revData.success && revData.files) {
+              console.log(`[restore] Writing ${Object.keys(revData.files).length} files to sandbox...`);
+              const writeRes = await fetch('/api/write-sandbox-files', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  files: revData.files,
+                  sandboxId: sId
+                })
+              });
+              
+              if (writeRes.ok) {
+                console.log('[restore] Project files restored successfully!');
+                toast.success(`Restored latest snapshot of project`);
+                
+                // Refresh iframe
+                if (iframeRef.current) {
+                  iframeRef.current.src = iframeRef.current.src;
+                }
+                
+                setIsRestoring(false);
+                await fetchSandboxFiles();
+                return true;
+              }
+            }
+          }
+        } else {
+          console.log('[restore] No versions found to restore');
+        }
+      }
+    } catch (err) {
+      console.error('[restore] Error restoring latest version:', err);
+    }
+    setIsRestoring(false);
+    return false;
+  };
+
   const sandboxCreationRef = useRef<boolean>(false);
   
   const createSandbox = async (fromHomeScreen = false) => {
@@ -578,8 +799,15 @@ function AISandboxPage() {
           displayStructure(data.structure);
         }
         
-        // Fetch sandbox files after creation
-        setTimeout(fetchSandboxFiles, 1000);
+        // Fetch sandbox files or restore existing project
+        const storedProjectId = sessionStorage.getItem('projectId');
+        if (storedProjectId) {
+          const pid = Number(storedProjectId);
+          restoreLatestVersion(pid, data.sandboxId);
+        } else {
+          // Fetch sandbox files after creation
+          setTimeout(fetchSandboxFiles, 1000);
+        }
         
         // For Vercel sandboxes, Vite is already started during setupViteApp
         // No need to restart it immediately after creation
@@ -628,6 +856,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     setLoading(true);
     log('Applying AI-generated code...');
     
+    // Abort any active apply stream
+    if (activeApplyStreamRef.current) {
+      activeApplyStreamRef.current.abort();
+    }
+    const abortController = new AbortController();
+    activeApplyStreamRef.current = abortController;
+    
     try {
       // Show progress component instead of individual messages
       setCodeApplicationState({ stage: 'analyzing' });
@@ -645,6 +880,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       const response = await fetch('/api/apply-ai-code-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({ 
           response: code,
           isEdit: isEdit,
@@ -1066,6 +1302,28 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
   };
 
+  const fetchHistory = async () => {
+    if (!activeProjectId) return;
+    try {
+      const res = await fetch(`/api/projects/${activeProjectId}/versions`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setHistoryLog(data.versions || []);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch history list:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeProjectId) {
+      fetchHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
   const fetchSandboxFiles = async () => {
     if (!sandboxData) return;
     
@@ -1083,10 +1341,85 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           setSandboxFiles(data.files || {});
           setFileStructure(data.structure || '');
           console.log('[fetchSandboxFiles] Updated file list:', Object.keys(data.files || {}).length, 'files');
+
+          // PostgreSQL Snapshot Integration
+          if (activeProjectId && data.files && Object.keys(data.files).length > 0 && !isRestoring) {
+            const versionTitle = `Update - ${new Date().toLocaleTimeString()}`;
+            fetch(`/api/projects/${activeProjectId}/versions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'save',
+                title: versionTitle,
+                files: data.files
+              })
+            })
+              .then(res => res.json())
+              .then(saveRes => {
+                if (saveRes.success) {
+                  console.log('[database] Snapshot version saved to db:', saveRes.versionId);
+                  fetchHistory();
+                }
+              })
+              .catch(dbErr => console.error('[database] Failed to save snapshot:', dbErr));
+          }
         }
       }
     } catch (error) {
       console.error('[fetchSandboxFiles] Error fetching files:', error);
+    }
+  };
+
+  const handleRevertVersion = async (versionId: number, versionTitle: string) => {
+    if (!activeProjectId || !sandboxData?.sandboxId) return;
+    
+    const loadingToast = toast.loading(`Reverting to ${versionTitle}...`);
+    try {
+      const response = await fetch(`/api/projects/${activeProjectId}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'revert',
+          versionId
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.files) {
+          // Write files back to sandbox
+          const writeResponse = await fetch('/api/write-sandbox-files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              files: data.files,
+              sandboxId: sandboxData.sandboxId
+            })
+          });
+          
+          if (writeResponse.ok) {
+            toast.dismiss(loadingToast);
+            toast.success(`Successfully reverted to ${versionTitle}`);
+            
+            // Refresh iframe
+            if (iframeRef.current) {
+              iframeRef.current.src = iframeRef.current.src;
+            }
+            
+            // Fetch updated files
+            fetchSandboxFiles();
+          } else {
+            throw new Error("Failed to apply reverted files");
+          }
+        } else {
+          throw new Error(data.error || "Failed to retrieve snapshot");
+        }
+      } else {
+        throw new Error("API call failed");
+      }
+    } catch (err: any) {
+      toast.dismiss(loadingToast);
+      toast.error(`Revert failed: ${err.message}`);
     }
   };
   
@@ -1598,10 +1931,49 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               ref={iframeRef}
               src={sandboxData.url}
               className="w-full h-full border-none"
-              title="Open Lovable Sandbox"
+              title="G Studio Sandbox"
               allow="clipboard-write"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
             />
+
+            {/* Iframe Floating Editor Toolbar Overlay */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white border border-gray-200 rounded-full px-4 py-2 shadow-lg flex items-center gap-3 z-20">
+              <button
+                type="button"
+                onClick={() => {
+                  setInspecting(!inspecting);
+                  toast.success(!inspecting ? "Inspector mode enabled. Hover and click elements in preview to select." : "Inspector mode disabled");
+                }}
+                className={`p-2 rounded-full transition-all flex items-center justify-center gap-1.5 ${
+                  inspecting 
+                    ? 'bg-orange-500 text-white shadow-md' 
+                    : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+                title="Inspect / Edit Element"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                </svg>
+                <span className="text-[10px] font-bold pr-1">Inspect</span>
+              </button>
+              <div className="h-4 w-[1px] bg-gray-200" />
+              <button
+                type="button"
+                onClick={() => {
+                  if (iframeRef.current) {
+                    iframeRef.current.src = iframeRef.current.src;
+                    toast.success("Preview reloaded");
+                  }
+                }}
+                className="p-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-all flex items-center justify-center gap-1.5"
+                title="Reload Preview"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3m0 0l3-3m-3 3V8" />
+                </svg>
+                <span className="text-[10px] font-bold pr-1">Reload</span>
+              </button>
+            </div>
             
             {/* Package installation overlay - shows when installing packages or applying code */}
             {codeApplicationState.stage && codeApplicationState.stage !== 'complete' && (
@@ -1727,6 +2099,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     
     addChatMessage(message, 'user');
     setAiChatInput('');
+
+    // If we have no files in sandbox, treat any message as a retry trigger for initial generation
+    if (Object.keys(sandboxFiles).length === 0 && homeUrlInput) {
+      addChatMessage(`Retrying initial generation...`, 'system');
+      if (message.toLowerCase() !== 'etsene yine' && message.toLowerCase() !== 'retry' && message.toLowerCase() !== 'neden faild oluyor') {
+        setHomeContextInput(prev => prev ? `${prev}\n\nAdditional instructions: ${message}` : message);
+      }
+      startGeneration();
+      return;
+    }
     
     // Check for special commands
     const lowerMessage = message.toLowerCase().trim();
@@ -1795,14 +2177,29 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       console.log('[chat] - sandboxId:', fullContext.sandboxId);
       console.log('[chat] - isEdit:', conversationContext.appliedCode.length > 0);
       
+      const finalPrompt = generationMode === 'plan'
+        ? `${message}\n\nIMPORTANT: Do NOT perform any code edits or file writes. Only provide a detailed structural plan of the requested changes and ask for my confirmation before modifying any files.`
+        : message;
+
+      // Abort any active generation stream
+      if (activeGenerationStreamRef.current) {
+        activeGenerationStreamRef.current.abort();
+      }
+      const abortController = new AbortController();
+      activeGenerationStreamRef.current = abortController;
+
       const response = await fetch('/api/generate-ai-code-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
-          prompt: message,
-          model: aiModel,
+          prompt: finalPrompt,
+          model: generationMode === 'plan' ? planningModel : coderModel,
           context: fullContext,
-          isEdit: conversationContext.appliedCode.length > 0
+          isEdit: conversationContext.appliedCode.length > 0,
+          planningModel,
+          coderModel,
+          qaModel
         })
       });
       
@@ -2745,38 +3142,47 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           sessionStorage.removeItem('brandExtensionMode');
           sessionStorage.removeItem('brandExtensionPrompt');
 
+        } else if (url.startsWith('scratch://')) {
+          // === BUILD FROM SCRATCH MODE ===
+          scrapeData = {
+            success: true,
+            content: 'Starting a blank canvas project from scratch.',
+            title: sessionStorage.getItem('projectName') || 'Blank Canvas',
+            source: 'blank-canvas'
+          };
+          addChatMessage('Initializing a brand new project from scratch...', 'system');
         } else {
           // === NORMAL CLONE MODE ===
           // Check if we have pre-scraped markdown content from search results
           const storedMarkdown = sessionStorage.getItem('siteMarkdown');
-        if (storedMarkdown) {
-          // Use the pre-scraped content
-          scrapeData = {
-            success: true,
-            content: storedMarkdown,
-            title: new URL(url).hostname,
-            source: 'search-result'
-          };
-          sessionStorage.removeItem('siteMarkdown'); // Clear after use
-          addChatMessage('Using cached content from search results...', 'system');
-        } else {
-          // Perform fresh scraping
-          const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url })
-          });
-          
-          if (!scrapeResponse.ok) {
-            throw new Error('Failed to scrape website');
+          if (storedMarkdown) {
+            // Use the pre-scraped content
+            scrapeData = {
+              success: true,
+              content: storedMarkdown,
+              title: new URL(url).hostname,
+              source: 'search-result'
+            };
+            sessionStorage.removeItem('siteMarkdown'); // Clear after use
+            addChatMessage('Using cached content from search results...', 'system');
+          } else {
+            // Perform fresh scraping
+            const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url })
+            });
+            
+            if (!scrapeResponse.ok) {
+              throw new Error('Failed to scrape website');
+            }
+            
+            scrapeData = await scrapeResponse.json() as ScrapeData;
+            
+            if (!scrapeData.success) {
+              throw new Error(scrapeData.error || 'Failed to scrape website');
+            }
           }
-          
-          scrapeData = await scrapeResponse.json() as ScrapeData;
-          
-          if (!scrapeData.success) {
-            throw new Error(scrapeData.error || 'Failed to scrape website');
-          }
-        }
         }
 
         setUrlStatus(brandExtensionMode ? ['Brand styles extracted!', 'Building your component...'] : ['Website scraped successfully!', 'Generating React app...']);
@@ -2928,19 +3334,21 @@ TECHNICAL REQUIREMENTS:
 Focus on building something NEW, minimal, and functional that perfectly matches the ${brandGuidelines.styleName || 'brand'} aesthetic and design system.`;
 
         } else {
-          // === NORMAL CLONE MODE PROMPT ===
-          // Store scraped data in conversation context
-          if (!scrapeData) {
+          // === NORMAL CLONE MODE PROMPT OR BUILD FROM SCRATCH PROMPT ===
+          const isFromScratch = url.startsWith('scratch://');
+          
+          if (!scrapeData && !isFromScratch) {
             throw new Error('Scrape data is missing');
           }
+          
           setConversationContext(prev => ({
             ...prev,
             scrapedWebsites: [...prev.scrapedWebsites, {
               url: url,
-              content: scrapeData,
+              content: scrapeData || { success: true, title: 'Blank App', content: 'From Scratch' },
               timestamp: new Date()
             }],
-            currentProject: `${url} Clone`
+            currentProject: isFromScratch ? (sessionStorage.getItem('projectName') || 'New Project') : `${url} Clone`
           }));
 
           // Filter out style-related context when using screenshot/URL-based generation
@@ -2975,7 +3383,25 @@ Focus on building something NEW, minimal, and functional that perfectly matches 
             }
           }
 
-          prompt = `I want to recreate the ${url} website as a complete React application based on the scraped content below.
+          if (isFromScratch) {
+            const styleName = sessionStorage.getItem('selectedStyle') || 'Minimalist';
+            prompt = `Create a brand new React application from scratch.
+
+PROJECT NAME: ${sessionStorage.getItem('projectName') || 'Blank Canvas'}
+DESIGN PREFERENCE / STYLE: ${styleName}
+
+USER SPECIFICATIONS / REQUIREMENTS:
+${filteredContext || 'Create a premium, modern dashboard landing page.'}
+
+IMPORTANT INSTRUCTIONS:
+- Create a COMPLETE, working React application
+- Implement a modern, premium UI/UX following the requested style
+- Use Tailwind CSS for all styling (no custom CSS files)
+- Write clean React components, utilizing standard hook imports
+- Avoid placeholders; write real, working code.
+- Make sure the app renders immediately with visible content.`;
+          } else {
+            prompt = `I want to recreate the ${url} website as a complete React application based on the scraped content below.
 
 ${JSON.stringify(scrapeData, null, 2)}
 
@@ -2996,6 +3422,7 @@ IMPORTANT INSTRUCTIONS:
 ${filteredContext ? '- Apply the user\'s context/theme requirements throughout the application' : ''}
 
 Focus on the key sections and content, making it clean and modern.`;
+          }
         }
 
         setGenerationProgress(prev => ({
@@ -3014,12 +3441,23 @@ Focus on the key sections and content, making it clean and modern.`;
           lastProcessedPosition: 0
         }));
         
+        // Abort any active generation stream
+        if (activeGenerationStreamRef.current) {
+          activeGenerationStreamRef.current.abort();
+        }
+        const abortController = new AbortController();
+        activeGenerationStreamRef.current = abortController;
+
         const aiResponse = await fetch('/api/generate-ai-code-stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: abortController.signal,
           body: JSON.stringify({ 
             prompt,
-            model: aiModel,
+            model: generationMode === 'plan' ? planningModel : coderModel,
+            planningModel,
+            coderModel,
+            qaModel,
             context: {
               sandboxId: sandboxData?.sandboxId,
               structure: structureContent,
@@ -3281,30 +3719,166 @@ Focus on the key sections and content, making it clean and modern.`;
   return (
     <HeaderProvider>
       <div className="font-sans bg-background text-foreground h-screen flex flex-col">
-      <div className="bg-white py-[15px] py-[8px] border-b border-border-faint flex items-center justify-between shadow-sm">
-        <HeaderBrandKit />
+      <div className="bg-white px-4 py-[8px] border-b border-border-faint flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3">
+          <HeaderBrandKit />
+          <div className="h-4 w-[1px] bg-gray-200" />
+          
+          {/* Lovable Title and Settings Dropdown Menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+              className="flex items-center gap-4 text-sm font-bold text-gray-800 hover:bg-gray-50 px-8 py-4 rounded-8 transition-all"
+            >
+              <span>{sessionStorage.getItem('projectName') || 'Marble Brilliance CMS'}</span>
+              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            
+            {showProjectDropdown && (
+              <div className="absolute left-0 mt-8 w-260 bg-white border border-gray-200 rounded-12 shadow-xl z-50 p-16 text-xs text-gray-700 animate-fade-in-up">
+                {/* Active Project & Sandbox Header */}
+                <div className="pb-12 border-b border-gray-150 mb-12">
+                  <div className="flex items-center gap-8 mb-8">
+                    <div className="w-24 h-24 bg-orange-600 rounded-full flex items-center justify-center text-white text-[10px] font-extrabold">
+                      {sessionStorage.getItem('projectName') ? sessionStorage.getItem('projectName')!.charAt(0).toUpperCase() : 'P'}
+                    </div>
+                    <div className="font-bold text-gray-900 truncate flex-1">
+                      {sessionStorage.getItem('projectName') || 'Active Project'}
+                    </div>
+                    <span className="text-[8px] font-bold px-6 py-2 bg-green-100 text-green-700 rounded-full uppercase tracking-wider">
+                      Active
+                    </span>
+                  </div>
+                  
+                  {/* Sandbox Info */}
+                  <div className="space-y-4 text-[10px] text-gray-500">
+                    <div className="flex justify-between">
+                      <span className="font-medium">Sandbox ID:</span>
+                      <span className="font-mono text-gray-900 truncate max-w-[120px]" title={sandboxData?.sandboxId || 'None'}>
+                        {sandboxData?.sandboxId || 'Creating...'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Vite Server:</span>
+                      <span className={`font-bold ${sandboxData?.url ? 'text-green-600' : 'text-yellow-600'}`}>
+                        {sandboxData?.url ? 'Running' : 'Offline'}
+                      </span>
+                    </div>
+                    {sandboxData?.url && (
+                      <a 
+                        href={sandboxData.url} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="block text-center mt-6 py-4 text-blue-600 hover:text-blue-700 font-bold border border-blue-100 hover:border-blue-200 rounded-8 hover:bg-blue-50 transition-all text-[10px]"
+                      >
+                        Open Sandbox URL
+                      </a>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Actions List */}
+                <div className="space-y-4">
+                  {sandboxData && (
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setShowProjectDropdown(false);
+                        toast.loading("Restarting Vite dev server...");
+                        fetch('/api/restart-vite', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ sandboxId: sandboxData.sandboxId })
+                        })
+                          .then(res => res.json())
+                          .then(data => {
+                            toast.dismiss();
+                            if (data.success) {
+                              toast.success("Vite dev server restarted successfully!");
+                              if (iframeRef.current) {
+                                iframeRef.current.src = iframeRef.current.src; // Reload iframe
+                              }
+                            } else {
+                              toast.error(`Failed to restart Vite: ${data.message || data.error}`);
+                            }
+                          })
+                          .catch(err => {
+                            toast.dismiss();
+                            toast.error(`Error restarting Vite: ${err.message}`);
+                          });
+                      }}
+                      className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-gray-700 hover:text-gray-900"
+                    >
+                      <svg className="w-14 h-14 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6H16" />
+                      </svg>
+                      Restart Dev Server
+                    </button>
+                  )}
+                  
+                  <button type="button" onClick={() => { setShowProjectDropdown(false); setShowHistoryPanel(true); }} className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-gray-700 hover:text-gray-900">
+                    <svg className="w-14 h-14 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Version History
+                  </button>
+
+                  <div className="h-1 w-full bg-gray-100 my-4" />
+                  
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      if (window.confirm("Are you sure you want to delete this project? This will permanently remove all file history and versions.")) {
+                        setShowProjectDropdown(false);
+                        if (activeProjectId) {
+                          toast.loading("Deleting project...");
+                          fetch(`/api/projects/${activeProjectId}`, { method: 'DELETE' })
+                            .then(res => res.json())
+                            .then(data => {
+                              toast.dismiss();
+                              if (data.success) {
+                                toast.success("Project deleted successfully");
+                                router.push('/');
+                              } else {
+                                toast.error(`Failed to delete project: ${data.error}`);
+                              }
+                            })
+                            .catch(err => {
+                              toast.dismiss();
+                              toast.error(`Error deleting project: ${err.message}`);
+                            });
+                        } else {
+                          toast.success("Project reset successfully");
+                          router.push('/');
+                        }
+                      }
+                    }} 
+                    className="w-full text-left py-8 px-8 hover:bg-gray-50 rounded-8 font-semibold flex items-center gap-8 text-red-600 hover:text-red-700"
+                  >
+                    <svg className="w-14 h-14 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    Delete Project
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
-          {/* Model Selector - Left side */}
-          <select
-            value={aiModel}
-            onChange={(e) => {
-              const newModel = e.target.value;
-              setAiModel(newModel);
-              const params = new URLSearchParams(searchParams);
-              params.set('model', newModel);
-              if (sandboxData?.sandboxId) {
-                params.set('sandbox', sandboxData.sandboxId);
-              }
-              router.push(`/generation?${params.toString()}`);
-            }}
-            className="px-3 py-1.5 text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-gray-300 transition-colors"
+          {/* AI Agent Team Button */}
+          <button
+            type="button"
+            onClick={() => setShowTeamModal(true)}
+            className="flex items-center gap-6 px-12 py-6 bg-orange-50 border border-orange-200 text-orange-800 rounded-8 hover:bg-orange-100 transition-all font-semibold shadow-sm text-xs"
+            title="Configure AI agent models & settings"
           >
-            {appConfig.ai.availableModels.map(model => (
-              <option key={model} value={model}>
-                {appConfig.ai.modelDisplayNames?.[model] || model}
-              </option>
-            ))}
-          </select>
+            <svg className="w-16 h-16 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <span>
+              AI Team: {appConfig.ai.modelDisplayNames?.[planningModel] ? appConfig.ai.modelDisplayNames[planningModel].split(' ')[0] : 'Plan'} • {appConfig.ai.modelDisplayNames?.[coderModel] ? appConfig.ai.modelDisplayNames[coderModel].split(' ')[0] : 'Code'} • {appConfig.ai.modelDisplayNames?.[qaModel] ? appConfig.ai.modelDisplayNames[qaModel].split(' ')[0] : 'QA'}
+            </span>
+          </button>
           <button 
             onClick={() => createSandbox()}
             className="p-8 rounded-lg transition-colors bg-gray-50 border border-gray-200 text-gray-700 hover:bg-gray-100"
@@ -3451,9 +4025,49 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           )}
 
-          <div
-            className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 scrollbar-hide"
-            ref={chatMessagesRef}>
+          {showHistoryPanel ? (
+            <div className="flex-1 flex flex-col overflow-hidden bg-white p-6">
+              <div className="flex justify-between items-center pb-4 border-b border-gray-200 mb-4">
+                <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wide">Version History</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryPanel(false)}
+                  className="text-gray-500 hover:text-gray-700 text-[10px] font-bold"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-hide">
+                {historyLog.length === 0 ? (
+                  <div className="text-center text-xs text-gray-400 py-12">
+                    No versions saved yet. Make edits to create snapshot versions.
+                  </div>
+                ) : (
+                  historyLog.map((ver) => (
+                    <div
+                      key={ver.id}
+                      className="p-4 bg-gray-50 border border-gray-150 rounded-xl hover:border-gray-300 transition-all flex justify-between items-center"
+                    >
+                      <div className="space-y-1">
+                        <div className="text-xs font-bold text-gray-800">{ver.version_title}</div>
+                        <div className="text-[9px] text-gray-400">{new Date(ver.created_at).toLocaleString()}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRevertVersion(ver.id, ver.version_title)}
+                        className="px-4 py-2 bg-gray-900 hover:bg-black text-white text-[10px] font-bold rounded-lg transition-all shadow-sm"
+                      >
+                        Revert
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div
+              className="flex-1 overflow-y-auto p-24 flex flex-col gap-16 scrollbar-hide"
+              ref={chatMessagesRef}>
             {chatMessages.map((msg, idx) => {
               // Check if this message is from a successful generation
               const isGenerationComplete = msg.content.includes('Successfully recreated') || 
@@ -3467,7 +4081,7 @@ Focus on the key sections and content, making it clean and modern.`;
                 <div key={idx} className="block">
                   <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className="block">
-                      <div className={`block rounded-[10px] px-14 py-8 ${
+                      <div className={`block rounded-12 px-16 py-12 ${
                         msg.type === 'user' ? 'bg-[#36322F] text-white ml-auto max-w-[80%]' :
                         msg.type === 'ai' ? 'bg-gray-100 text-gray-900 mr-auto max-w-[80%]' :
                         msg.type === 'system' ? 'bg-[#36322F] text-white text-sm' :
@@ -3476,7 +4090,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         'bg-[#36322F] text-white text-sm'
                       }`}>
                     {msg.type === 'command' ? (
-                      <div className="flex items-start gap-2">
+                      <div className="flex items-start gap-8">
                         <span className={`text-xs ${
                           msg.metadata?.commandType === 'input' ? 'text-blue-400' :
                           msg.metadata?.commandType === 'error' ? 'text-red-400' :
@@ -3488,24 +4102,40 @@ Focus on the key sections and content, making it clean and modern.`;
                         <span className="flex-1 whitespace-pre-wrap text-white">{msg.content}</span>
                       </div>
                     ) : msg.type === 'error' ? (
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-start gap-12">
                         <div className="flex-shrink-0">
-                          <div className="w-8 h-8 bg-red-800 rounded-full flex items-center justify-center">
-                            <svg className="w-6 h-6 text-red-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <div className="w-32 h-32 bg-red-800 rounded-full flex items-center justify-center">
+                            <svg className="w-24 h-24 text-red-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                             </svg>
                           </div>
                         </div>
                         <div className="flex-1">
-                          <div className="font-semibold mb-1">Build Errors Detected</div>
+                          <div className="font-semibold mb-4">Build Errors Detected</div>
                           <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
-                          <div className="mt-2 text-xs opacity-70">Press 'F' or click the Fix button above to resolve</div>
+                          <div className="mt-8 text-xs opacity-70">Press 'F' or click the Fix button above to resolve</div>
                         </div>
                       </div>
                     ) : (
                       <span className="text-sm">{msg.content}</span>
                     )}
                       </div>
+
+                      {/* View History button under AI message */}
+                      {msg.type === 'ai' && idx === chatMessages.length - 1 && historyLog.length > 0 && (
+                        <div className="mt-2 flex justify-start">
+                          <button
+                            type="button"
+                            onClick={() => setShowHistoryPanel(true)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 hover:text-gray-900 rounded-lg text-[10px] font-bold transition-all shadow-sm"
+                          >
+                            <svg className="w-3 h-3 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            View History
+                          </button>
+                        </div>
+                      )}
                   
                       {/* Show branding data if this is a brand extraction message */}
                       {msg.metadata?.brandingData && (
@@ -3843,16 +4473,142 @@ Focus on the key sections and content, making it clean and modern.`;
                 )}
               </div>
             )}
-          </div>
+            </div>
+          )}
 
-          <div className="p-4 border-t border-border bg-background-base">
-            <HeroInput
-              value={aiChatInput}
-              onChange={setAiChatInput}
-              onSubmit={sendChatMessage}
-              placeholder="Describe what you want to build..."
-              showSearchFeatures={false}
-            />
+          {/* SEO Auditor Card */}
+          {activeTab === 'preview' && sandboxData?.url && (
+            <div className="mx-16 my-8 p-16 bg-white border border-gray-200 rounded-16 shadow-sm space-y-12">
+              <div className="flex justify-between items-center">
+                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Review your SEO</span>
+                {seoResult && (
+                  <span className={`text-[10px] font-extrabold px-12 py-4 rounded-full ${
+                    seoResult.score >= 80 ? 'bg-green-50 text-green-700' :
+                    seoResult.score >= 50 ? 'bg-yellow-50 text-yellow-700 font-semibold' :
+                    'bg-red-50 text-red-700'
+                  }`}>
+                    Score: {seoResult.score}/100
+                  </span>
+                )}
+              </div>
+              
+              {seoResult ? (
+                <div className="space-y-8 text-[10px] text-gray-600">
+                  <div className="flex items-center gap-8">
+                    <span className={seoResult.title ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
+                      {seoResult.title ? "✓" : "✗"}
+                    </span>
+                    <span>Title tag: {seoResult.title ? `"${seoResult.title}"` : "Missing!"}</span>
+                  </div>
+                  <div className="flex items-center gap-8">
+                    <span className={seoResult.metaDesc ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
+                      {seoResult.metaDesc ? "✓" : "✗"}
+                    </span>
+                    <span>Meta Description: {seoResult.metaDesc ? "Exists" : "Missing!"}</span>
+                  </div>
+                  <div className="flex items-center gap-8">
+                    <span className={seoResult.viewport ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
+                      {seoResult.viewport ? "✓" : "✗"}
+                    </span>
+                    <span>Viewport (Mobile ready): {seoResult.viewport ? "Yes" : "Missing!"}</span>
+                  </div>
+                  <div className="flex items-center gap-8">
+                    <span className={seoResult.h1Count === 1 ? "text-green-500 font-bold" : "text-yellow-500 font-bold"}>
+                      {seoResult.h1Count === 1 ? "✓" : "!"}
+                    </span>
+                    <span>H1 Count: {seoResult.h1Count} (Should be exactly 1)</span>
+                  </div>
+                  <div className="flex items-center gap-8">
+                    <span className={seoResult.imagesWithoutAlt === 0 ? "text-green-500 font-bold" : "text-yellow-500 font-bold"}>
+                      {seoResult.imagesWithoutAlt === 0 ? "✓" : "!"}
+                    </span>
+                    <span>Images without Alt: {seoResult.imagesWithoutAlt}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSeoAuditing(true);
+                      if (iframeRef.current && iframeRef.current.contentWindow) {
+                        iframeRef.current.contentWindow.postMessage({ type: 'RUN_SEO_AUDIT' }, '*');
+                      }
+                    }}
+                    className="w-full text-center py-8 bg-blue-50 text-blue-600 font-bold rounded-8 hover:bg-blue-100 transition-all text-[10px]"
+                  >
+                    Run Audit Again
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSeoAuditing(true);
+                    if (iframeRef.current && iframeRef.current.contentWindow) {
+                      iframeRef.current.contentWindow.postMessage({ type: 'RUN_SEO_AUDIT' }, '*');
+                    } else {
+                      setSeoAuditing(false);
+                      toast.error("Iframe preview is not loaded yet.");
+                    }
+                  }}
+                  disabled={seoAuditing}
+                  className="w-full text-center py-10 bg-blue-600 text-white font-bold rounded-12 hover:bg-blue-700 transition-all disabled:opacity-50 text-[10px] shadow-sm"
+                >
+                  {seoAuditing ? "Auditing live React DOM..." : "Review SEO"}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="p-16 border-t border-border bg-background-base space-y-12">
+            {/* Suggestion Chips */}
+            <div className="flex gap-8 px-4 overflow-x-auto pb-4 scrollbar-hide">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHistoryPanel(true);
+                  toast.info("Select a version from the history panel to revert.");
+                }}
+                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
+              >
+                Önceki sürüme dön
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiChatInput("3 yeni tasarım dene")}
+                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
+              >
+                3 yeni tasarım dene
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiChatInput("Tipografi değiştir")}
+                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
+              >
+                Tipografi değiştir
+              </button>
+            </div>
+
+            <div className="flex items-center gap-8">
+              <div className="flex-1">
+                <HeroInput
+                  value={aiChatInput}
+                  onChange={setAiChatInput}
+                  onSubmit={sendChatMessage}
+                  placeholder={generationMode === 'build' ? "Describe what you want to build..." : "Discuss the plan before building..."}
+                  showSearchFeatures={false}
+                />
+              </div>
+              <div className="flex flex-col gap-4 pr-4">
+                <span className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Mode</span>
+                <select
+                  value={generationMode}
+                  onChange={(e) => setGenerationMode(e.target.value as 'build' | 'plan')}
+                  className="bg-white border border-gray-200 text-gray-700 text-[10px] font-bold rounded-8 px-8 py-6 focus:outline-none cursor-pointer shadow-sm hover:bg-gray-50 transition-all"
+                >
+                  <option value="build">Build</option>
+                  <option value="plan">Plan</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3939,11 +4695,189 @@ Focus on the key sections and content, making it clean and modern.`;
             {renderMainContent()}
           </div>
         </div>
+      {showTeamModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-16 animate-fade-in">
+          <div className="bg-white rounded-16 shadow-2xl w-full max-w-[500px] border border-gray-150 overflow-hidden flex flex-col max-h-[90vh] animate-scale-up">
+            {/* Header */}
+            <div className="bg-[#36322F] text-white px-20 py-16 flex justify-between items-center">
+              <div className="flex items-center gap-8">
+                <svg className="w-20 h-20 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+                <span className="font-bold text-sm tracking-wide">Configure AI Agent Team</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowTeamModal(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-16 h-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-20 overflow-y-auto space-y-16 text-xs text-gray-700">
+              <p className="text-gray-500 mb-8">
+                Assign specialized LLM models to different tasks to maximize the performance of your AI developer team.
+              </p>
+
+              {/* Specialist 1: Planner */}
+              <div className="bg-gray-50 border border-gray-200 rounded-12 p-16 space-y-12">
+                <div className="flex justify-between items-start gap-8">
+                  <div>
+                    <h4 className="font-bold text-gray-900 flex items-center gap-6">
+                      <span className="w-6 h-6 rounded-full bg-blue-500 inline-block" />
+                      Planning Specialist
+                    </h4>
+                    <p className="text-[10px] text-gray-400 mt-2">
+                      Analyzes requirements, suggests project architectures, and conducts structural discussions under Plan Mode.
+                    </p>
+                  </div>
+                  <span className="text-[9px] font-bold bg-blue-50 text-blue-700 px-8 py-2 rounded-full uppercase tracking-wider">
+                    Plan Agent
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-4">
+                    Assigned Model
+                  </label>
+                  <select
+                    value={planningModel}
+                    onChange={(e) => setPlanningModel(e.target.value)}
+                    className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-blue-400 transition-all font-medium"
+                  >
+                    {appConfig.ai.availableModels.map(model => (
+                      <option key={model} value={model}>
+                        {appConfig.ai.modelDisplayNames?.[model] || model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Specialist 2: Coder */}
+              <div className="bg-gray-50 border border-gray-200 rounded-12 p-16 space-y-12">
+                <div className="flex justify-between items-start gap-8">
+                  <div>
+                    <h4 className="font-bold text-gray-900 flex items-center gap-6">
+                      <span className="w-6 h-6 rounded-full bg-green-500 inline-block" />
+                      Coding Specialist
+                    </h4>
+                    <p className="text-[10px] text-gray-400 mt-2">
+                      Applies code changes, designs file structures, installs packages, and builds components under Build Mode.
+                    </p>
+                  </div>
+                  <span className="text-[9px] font-bold bg-green-50 text-green-700 px-8 py-2 rounded-full uppercase tracking-wider">
+                    Build Agent
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-4">
+                    Assigned Model
+                  </label>
+                  <select
+                    value={coderModel}
+                    onChange={(e) => setCoderModel(e.target.value)}
+                    className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-green-400 transition-all font-medium"
+                  >
+                    {appConfig.ai.availableModels.map(model => (
+                      <option key={model} value={model}>
+                        {appConfig.ai.modelDisplayNames?.[model] || model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Specialist 3: Quality Assurance (Reviewer) */}
+              <div className="bg-gray-50 border border-gray-200 rounded-12 p-16 space-y-12">
+                <div className="flex justify-between items-start gap-8">
+                  <div>
+                    <h4 className="font-bold text-gray-900 flex items-center gap-6">
+                      <span className="w-6 h-6 rounded-full bg-orange-500 inline-block" />
+                      Quality Assurance Specialist
+                    </h4>
+                    <p className="text-[10px] text-gray-400 mt-2">
+                      Performs real-time HTML/DOM SEO audits, tracks compilation logs, and suggests hotfixes for sandbox build errors.
+                    </p>
+                  </div>
+                  <span className="text-[9px] font-bold bg-orange-50 text-orange-700 px-8 py-2 rounded-full uppercase tracking-wider">
+                    QA Agent
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-4">
+                    Assigned Model
+                  </label>
+                  <select
+                    value={qaModel}
+                    onChange={(e) => setQaModel(e.target.value)}
+                    className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-orange-400 transition-all font-medium"
+                  >
+                    {appConfig.ai.availableModels.map(model => (
+                      <option key={model} value={model}>
+                        {appConfig.ai.modelDisplayNames?.[model] || model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 px-20 py-12 border-t border-gray-150 flex justify-end gap-8">
+              <button
+                type="button"
+                onClick={() => setShowTeamModal(false)}
+                className="px-12 py-8 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-8 font-semibold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeProjectId) {
+                    toast.loading("Saving agent team configuration...");
+                    fetch(`/api/projects/${activeProjectId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        planningModel,
+                        coderModel,
+                        qaModel
+                      })
+                    })
+                      .then(res => res.json())
+                      .then(data => {
+                        toast.dismiss();
+                        if (data.success) {
+                          toast.success("Agent team configuration saved successfully!");
+                          setShowTeamModal(false);
+                        } else {
+                          toast.error(`Failed to save configuration: ${data.error}`);
+                        }
+                      })
+                      .catch(err => {
+                        toast.dismiss();
+                        toast.error(`Error saving configuration: ${err.message}`);
+                      });
+                  } else {
+                    toast.success("Agent team configuration updated!");
+                    setShowTeamModal(false);
+                  }
+                }}
+                className="px-12 py-8 bg-gray-900 hover:bg-black text-white rounded-8 font-semibold transition-all shadow-sm"
+              >
+                Save Configuration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       </div>
-
-
-
-
     </div>
     </HeaderProvider>
   );

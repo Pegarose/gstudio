@@ -57,3 +57,9 @@ e2b-template-*
 repomix-output.txt
 bun.lockb
 .env*.local
+
+# Large files and backups
+*.zip
+*.tar
+*.gz
+Loveble/

@@ -44,6 +44,32 @@ const openai = createOpenAI({
   baseURL: isUsingAIGateway ? aiGatewayBaseURL : process.env.OPENAI_BASE_URL,
 });
 
+const opencodeClient = process.env.OPENCODEGO_API_KEY ? createOpenAI({
+  apiKey: process.env.OPENCODEGO_API_KEY,
+  baseURL: process.env.OPENCODEGO_API_BASE?.endsWith('/v1') || process.env.OPENCODEGO_API_BASE?.endsWith('/v1/')
+    ? process.env.OPENCODEGO_API_BASE
+    : `${process.env.OPENCODEGO_API_BASE?.replace(/\/$/, '')}/v1`,
+}) : null;
+
+const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
+  apiKey: process.env.TR4_API_KEY,
+  baseURL: process.env.TR4_API_BASE?.endsWith('/v1') || process.env.TR4_API_BASE?.endsWith('/v1/')
+    ? process.env.TR4_API_BASE
+    : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
+}) : null;
+
+const clineClient = process.env.CLINE_API_KEY ? createOpenAI({
+  apiKey: process.env.CLINE_API_KEY,
+  baseURL: 'https://api.cline.bot/api/v1',
+}) : null;
+
+const agentRouterClient = process.env.AGENTROUTER_API_KEY ? createOpenAI({
+  apiKey: process.env.AGENTROUTER_API_KEY,
+  baseURL: process.env.AGENTROUTER_API_BASE?.endsWith('/v1') || process.env.AGENTROUTER_API_BASE?.endsWith('/v1/')
+    ? process.env.AGENTROUTER_API_BASE
+    : `${process.env.AGENTROUTER_API_BASE?.replace(/\/$/, '')}/v1`,
+}) : null;
+
 // Helper function to analyze user preferences from conversation history
 function analyzeUserPreferences(messages: ConversationMessage[]): {
   commonPatterns: string[];
@@ -88,9 +114,45 @@ declare global {
   var conversationState: ConversationState | null;
 }
 
+interface CustomRouteInfo {
+  client: any;
+  name: string;
+  provider: 'opencode' | 'tr4' | 'agentrouter';
+}
+
+function getModelProvider(model: string): CustomRouteInfo | null {
+  const m = model.toLowerCase();
+  
+  // TR4 Exclusive models from user screenshot
+  const tr4Exclusive = [
+    'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 
+    'gpt-image-1.5', 'gpt-image-2', 'gpt-oss-120b-medium', 'gpt-5.3-codex-spark', 'gpt-5.5',
+    'claude-opus-4-6-thinking', 'claude-sonnet-4-6',
+    'gemini-3-flash', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite', 'gemini-pro-agent', 
+    'gemini-3.5-flash-low', 'gemini-3.5-flash-extra-low', 'gemini-3-flash-agent', 'gemini-3.1-pro-low'
+  ];
+
+  // 1. Route TR4 models
+  if (tr4Exclusive.includes(m) && process.env.TR4_API_KEY && tr4Client) {
+    return { client: tr4Client, name: model, provider: 'tr4' };
+  }
+  
+  // 2. All other models (Kimi, Deepseek, Qwen, Minimax, GLM, etc.) route to Opencode
+  if (process.env.OPENCODEGO_API_KEY && opencodeClient) {
+    return { client: opencodeClient, name: model, provider: 'opencode' };
+  }
+
+  // Fallbacks
+  if (process.env.AGENTROUTER_API_KEY && agentRouterClient) {
+    return { client: agentRouterClient, name: model, provider: 'agentrouter' };
+  }
+
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false } = await request.json();
+    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false, planningModel, coderModel } = await request.json();
     
     console.log('[generate-ai-code-stream] Received request:');
     console.log('[generate-ai-code-stream] - prompt:', prompt);
@@ -202,7 +264,7 @@ export async function POST(request: NextRequest) {
               const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, manifest, model })
+                body: JSON.stringify({ prompt, manifest, model: planningModel || model })
               });
               
               if (intentResponse.ok) {
@@ -347,7 +409,7 @@ User request: "${prompt}"`;
                       const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt, manifest, model })
+                        body: JSON.stringify({ prompt, manifest, model: planningModel || model })
                       });
                       
                       if (intentResponse.ok) {
@@ -1021,7 +1083,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                         const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ prompt, manifest: filesData.manifest, model })
+                          body: JSON.stringify({ prompt, manifest: filesData.manifest, model: planningModel || model })
                         });
                         
                         if (intentResponse.ok) {
@@ -1213,29 +1275,41 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         const packagesToInstall: string[] = [];
         
         // Determine which provider to use based on model
+        let modelProvider: any;
+        let actualModel: string = '';
+        let isUsingCustomRoute = false;
+
         const isAnthropic = model.startsWith('anthropic/');
         const isGoogle = model.startsWith('google/');
         const isOpenAI = model.startsWith('openai/');
         const isKimiGroq = model === 'moonshotai/kimi-k2-instruct-0905';
-        const modelProvider = isAnthropic ? anthropic : 
-                              (isOpenAI ? openai : 
-                              (isGoogle ? googleGenerativeAI : 
-                              (isKimiGroq ? groq : groq)));
-        
-        // Fix model name transformation for different providers
-        let actualModel: string;
-        if (isAnthropic) {
-          actualModel = model.replace('anthropic/', '');
-        } else if (isOpenAI) {
-          actualModel = model.replace('openai/', '');
-        } else if (isKimiGroq) {
-          // Kimi on Groq - use full model string
-          actualModel = 'moonshotai/kimi-k2-instruct-0905';
-        } else if (isGoogle) {
-          // Google uses specific model names - convert our naming to theirs  
-          actualModel = model.replace('google/', '');
-        } else {
-          actualModel = model;
+
+        const customRoute = getModelProvider(model);
+        if (customRoute) {
+          isUsingCustomRoute = true;
+          modelProvider = customRoute.client;
+          actualModel = customRoute.name;
+          console.log(`[generate-ai-code-stream] Intercepting request: Using ${customRoute.provider.toUpperCase()} provider with model: ${actualModel}`);
+        }
+
+        if (!isUsingCustomRoute) {
+          modelProvider = isAnthropic ? anthropic : 
+                                (isOpenAI ? openai : 
+                                (isGoogle ? googleGenerativeAI : 
+                                (isKimiGroq ? groq : groq)));
+          
+          if (isAnthropic) {
+            actualModel = model.replace('anthropic/', '');
+          } else if (isOpenAI) {
+            actualModel = model.replace('openai/', '');
+          } else if (isKimiGroq) {
+            actualModel = 'moonshotai/kimi-k2-instruct-0905';
+          } else if (isGoogle) {
+            actualModel = model.replace('google/', '');
+          } else {
+            actualModel = model;
+          }
+          console.log(`[generate-ai-code-stream] Using standard provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
         }
 
         console.log(`[generate-ai-code-stream] Using provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
@@ -1244,7 +1318,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
 
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
-          model: modelProvider(actualModel),
+          model: modelProvider.chat ? modelProvider.chat(actualModel) : modelProvider(actualModel),
           messages: [
             { 
               role: 'system', 
@@ -1311,8 +1385,8 @@ It's better to have 3 complete files than 10 incomplete files.`
           // We use XML tags for package detection instead
         };
         
-        // Add temperature for non-reasoning models
-        if (!model.startsWith('openai/gpt-5')) {
+        // Add temperature for non-reasoning models (skip for custom routes to avoid bad request errors)
+        if (!model.startsWith('openai/gpt-5') && !isUsingCustomRoute) {
           streamOptions.temperature = 0.7;
         }
         
@@ -1329,18 +1403,268 @@ It's better to have 3 complete files than 10 incomplete files.`
         let retryCount = 0;
         const maxRetries = 2;
         
+        let generatedCode = '';
+        let explanation = '';
+        let componentCount = 0;
+        const files: Array<{ path: string; content: string }> = [];
+        
         while (retryCount <= maxRetries) {
           try {
+            // Reset streaming state on each attempt
+            generatedCode = '';
+            explanation = '';
+            componentCount = 0;
+            files.length = 0; // Clear the files array
+            
+            let currentFile = '';
+            let currentFilePath = '';
+            let isInFile = false;
+            let isInTag = false;
+            let conversationalBuffer = '';
+            let tagBuffer = '';
+            
             result = await streamText(streamOptions);
+            
+            // Stream the response and parse for packages in real-time
+            for await (const textPart of result?.textStream || []) {
+              const text = textPart || '';
+              generatedCode += text;
+              currentFile += text;
+              
+              // Combine with buffer for tag detection
+              const searchText = tagBuffer + text;
+              
+              // Log streaming chunks to console
+              process.stdout.write(text);
+              
+              // Check if we're entering or leaving a tag
+              const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
+              const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
+              
+              if (hasOpenTag) {
+                // Send any buffered conversational text before the tag
+                if (conversationalBuffer.trim() && !isInTag) {
+                  await sendProgress({ 
+                    type: 'conversation', 
+                    text: conversationalBuffer.trim()
+                  });
+                  conversationalBuffer = '';
+                }
+                isInTag = true;
+              }
+              
+              if (hasCloseTag) {
+                isInTag = false;
+              }
+              
+              // If we're not in a tag, buffer as conversational text
+              if (!isInTag && !hasOpenTag) {
+                conversationalBuffer += text;
+              }
+              
+              // Stream the raw text for live preview
+              await sendProgress({ 
+                type: 'stream', 
+                text: text,
+                raw: true 
+              });
+              
+              // Debug: Log every 100 characters streamed
+              if (generatedCode.length % 100 < text.length) {
+                console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
+              }
+              
+              // Check for package tags in buffered text (ONLY for edits, not initial generation)
+              let lastIndex = 0;
+              if (isEdit) {
+                const packageRegex = /<package>([^<]+)<\/package>/g;
+                let packageMatch;
+                
+                while ((packageMatch = packageRegex.exec(searchText)) !== null) {
+                  const packageName = packageMatch[1].trim();
+                  if (packageName && !packagesToInstall.includes(packageName)) {
+                    packagesToInstall.push(packageName);
+                    console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
+                    await sendProgress({ 
+                      type: 'package', 
+                      name: packageName,
+                      message: `Package detected: ${packageName}`
+                    });
+                  }
+                  lastIndex = packageMatch.index + packageMatch[0].length;
+                }
+              }
+              
+              // Keep unmatched portion in buffer for next iteration
+              tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+              
+              // Check for file boundaries
+              if (text.includes('<file path="')) {
+                const pathMatch = text.match(/<file path="([^"]+)"/);
+                if (pathMatch) {
+                  currentFilePath = pathMatch[1];
+                  isInFile = true;
+                  currentFile = text;
+                }
+              }
+              
+              // Check for file end
+              if (isInFile && currentFile.includes('</file>')) {
+                isInFile = false;
+                
+                // Send component progress update
+                if (currentFilePath.includes('components/')) {
+                  componentCount++;
+                  const componentName = currentFilePath.split('/').pop()?.replace('.jsx', '') || 'Component';
+                  await sendProgress({ 
+                    type: 'component', 
+                    name: componentName,
+                    path: currentFilePath,
+                    index: componentCount
+                  });
+                } else if (currentFilePath.includes('App.jsx')) {
+                  await sendProgress({ 
+                    type: 'app', 
+                    message: 'Generated main App.jsx',
+                    path: currentFilePath
+                  });
+                }
+                
+                currentFile = '';
+                currentFilePath = '';
+              }
+            }
+            
+            console.log('\n\n[generate-ai-code-stream] Streaming complete.');
+            
+            // Send any remaining conversational text
+            if (conversationalBuffer.trim()) {
+              await sendProgress({ 
+                type: 'conversation', 
+                text: conversationalBuffer.trim()
+              });
+            }
+            
+            // Also parse <packages> tag for multiple packages - ONLY for edits
+            if (isEdit) {
+              const packagesRegex = /<packages>([\s\S]*?)<\/packages>/g;
+              let packagesMatch;
+              while ((packagesMatch = packagesRegex.exec(generatedCode)) !== null) {
+                const packagesContent = packagesMatch[1].trim();
+                const packagesList = packagesContent.split(/[\n,]+/)
+                  .map(pkg => pkg.trim())
+                  .filter(pkg => pkg.length > 0);
+                
+                for (const packageName of packagesList) {
+                  if (!packagesToInstall.includes(packageName)) {
+                    packagesToInstall.push(packageName);
+                    console.log(`[generate-ai-code-stream] Package from <packages> tag: ${packageName}`);
+                    await sendProgress({ 
+                      type: 'package', 
+                      name: packageName,
+                      message: `Package detected: ${packageName}`
+                    });
+                  }
+                }
+              }
+            }
+            
+            // Function to extract packages from import statements
+            const extractPackagesFromCode = (content: string): string[] => {
+              const packages: string[] = [];
+              const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"]([^'"]+)['"]/g;
+              let importMatch;
+              
+              while ((importMatch = importRegex.exec(content)) !== null) {
+                const importPath = importMatch[1];
+                if (!importPath.startsWith('.') && !importPath.startsWith('/') && 
+                    importPath !== 'react' && importPath !== 'react-dom' &&
+                    !importPath.startsWith('@/')) {
+                  const packageName = importPath.startsWith('@') 
+                    ? importPath.split('/').slice(0, 2).join('/')
+                    : importPath.split('/')[0];
+                  
+                  if (!packages.includes(packageName)) {
+                    packages.push(packageName);
+                  }
+                }
+              }
+              
+              return packages;
+            };
+            
+            // Parse files and send progress for each
+            const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+            let match;
+            
+            while ((match = fileRegex.exec(generatedCode)) !== null) {
+              const filePath = match[1];
+              const content = match[2].trim();
+              files.push({ path: filePath, content });
+              
+              // Extract packages from file content - ONLY for edits
+              if (isEdit) {
+                const filePackages = extractPackagesFromCode(content);
+                for (const pkg of filePackages) {
+                  if (!packagesToInstall.includes(pkg)) {
+                    packagesToInstall.push(pkg);
+                    console.log(`[generate-ai-code-stream] Package detected from imports: ${pkg}`);
+                    await sendProgress({ 
+                      type: 'package', 
+                      name: pkg,
+                      message: `Package detected from imports: ${pkg}`
+                    });
+                  }
+                }
+              }
+              
+              // Send progress for each file
+              if (filePath.includes('components/')) {
+                const componentName = filePath.split('/').pop()?.replace('.jsx', '') || 'Component';
+                await sendProgress({ 
+                  type: 'component', 
+                  name: componentName,
+                  path: filePath,
+                  index: componentCount
+                });
+              } else if (filePath.includes('App.jsx')) {
+                await sendProgress({ 
+                  type: 'app', 
+                  message: 'Generated main App.jsx',
+                  path: filePath
+                });
+              }
+            }
+            
             break; // Success, exit retry loop
           } catch (streamError: any) {
-            console.error(`[generate-ai-code-stream] Error calling streamText (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
+            console.error(`[generate-ai-code-stream] Error calling streamText/streaming (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
+            
+            // Fallback from Opencode to Cline
+            if (isUsingCustomRoute && customRoute?.provider === 'opencode' && process.env.CLINE_API_KEY && clineClient) {
+              const clineModelName = `cline-pass/${customRoute.name}`;
+              const clineModel = clineClient.chat ? clineClient.chat(clineModelName) : clineClient(clineModelName);
+              
+              if (streamOptions.model !== clineModel) {
+                console.log(`[generate-ai-code-stream] Opencode failed. Switching to fallback provider: Cline with model: ${clineModelName}`);
+                await sendProgress({ 
+                  type: 'info', 
+                  message: 'Opencode failed, falling back to Cline API...' 
+                });
+                
+                streamOptions.model = clineModel;
+                actualModel = clineModelName;
+                retryCount = 0; // Reset retry count for the new provider
+                continue; // Retry with the new provider immediately
+              }
+            }
             
             // Check if this is a Groq service unavailable error
             const isGroqServiceError = isKimiGroq && streamError.message?.includes('Service unavailable');
             const isRetryableError = streamError.message?.includes('Service unavailable') || 
                                     streamError.message?.includes('rate limit') ||
-                                    streamError.message?.includes('timeout');
+                                    streamError.message?.includes('timeout') ||
+                                    streamError.message?.includes('Upstream request failed');
             
             if (retryCount < maxRetries && isRetryableError) {
               retryCount++;
@@ -1381,236 +1705,9 @@ It's better to have 3 complete files than 10 incomplete files.`
           }
         }
         
-        // Stream the response and parse in real-time
-        let generatedCode = '';
-        let currentFile = '';
-        let currentFilePath = '';
-        let componentCount = 0;
-        let isInFile = false;
-        let isInTag = false;
-        let conversationalBuffer = '';
-        
-        // Buffer for incomplete tags
-        let tagBuffer = '';
-        
-        // Stream the response and parse for packages in real-time
-        for await (const textPart of result?.textStream || []) {
-          const text = textPart || '';
-          generatedCode += text;
-          currentFile += text;
-          
-          // Combine with buffer for tag detection
-          const searchText = tagBuffer + text;
-          
-          // Log streaming chunks to console
-          process.stdout.write(text);
-          
-          // Check if we're entering or leaving a tag
-          const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-          const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
-          
-          if (hasOpenTag) {
-            // Send any buffered conversational text before the tag
-            if (conversationalBuffer.trim() && !isInTag) {
-              await sendProgress({ 
-                type: 'conversation', 
-                text: conversationalBuffer.trim()
-              });
-              conversationalBuffer = '';
-            }
-            isInTag = true;
-          }
-          
-          if (hasCloseTag) {
-            isInTag = false;
-          }
-          
-          // If we're not in a tag, buffer as conversational text
-          if (!isInTag && !hasOpenTag) {
-            conversationalBuffer += text;
-          }
-          
-          // Stream the raw text for live preview
-          await sendProgress({ 
-            type: 'stream', 
-            text: text,
-            raw: true 
-          });
-          
-          // Debug: Log every 100 characters streamed
-          if (generatedCode.length % 100 < text.length) {
-            console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-          }
-          
-          // Check for package tags in buffered text (ONLY for edits, not initial generation)
-          let lastIndex = 0;
-          if (isEdit) {
-            const packageRegex = /<package>([^<]+)<\/package>/g;
-            let packageMatch;
-            
-            while ((packageMatch = packageRegex.exec(searchText)) !== null) {
-              const packageName = packageMatch[1].trim();
-              if (packageName && !packagesToInstall.includes(packageName)) {
-                packagesToInstall.push(packageName);
-                console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
-                await sendProgress({ 
-                  type: 'package', 
-                  name: packageName,
-                  message: `Package detected: ${packageName}`
-                });
-              }
-              lastIndex = packageMatch.index + packageMatch[0].length;
-            }
-          }
-          
-          // Keep unmatched portion in buffer for next iteration
-          tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
-          
-          // Check for file boundaries
-          if (text.includes('<file path="')) {
-            const pathMatch = text.match(/<file path="([^"]+)"/);
-            if (pathMatch) {
-              currentFilePath = pathMatch[1];
-              isInFile = true;
-              currentFile = text;
-            }
-          }
-          
-          // Check for file end
-          if (isInFile && currentFile.includes('</file>')) {
-            isInFile = false;
-            
-            // Send component progress update
-            if (currentFilePath.includes('components/')) {
-              componentCount++;
-              const componentName = currentFilePath.split('/').pop()?.replace('.jsx', '') || 'Component';
-              await sendProgress({ 
-                type: 'component', 
-                name: componentName,
-                path: currentFilePath,
-                index: componentCount
-              });
-            } else if (currentFilePath.includes('App.jsx')) {
-              await sendProgress({ 
-                type: 'app', 
-                message: 'Generated main App.jsx',
-                path: currentFilePath
-              });
-            }
-            
-            currentFile = '';
-            currentFilePath = '';
-          }
-        }
-        
-        console.log('\n\n[generate-ai-code-stream] Streaming complete.');
-        
-        // Send any remaining conversational text
-        if (conversationalBuffer.trim()) {
-          await sendProgress({ 
-            type: 'conversation', 
-            text: conversationalBuffer.trim()
-          });
-        }
-        
-        // Also parse <packages> tag for multiple packages - ONLY for edits
-        if (isEdit) {
-          const packagesRegex = /<packages>([\s\S]*?)<\/packages>/g;
-          let packagesMatch;
-          while ((packagesMatch = packagesRegex.exec(generatedCode)) !== null) {
-            const packagesContent = packagesMatch[1].trim();
-            const packagesList = packagesContent.split(/[\n,]+/)
-              .map(pkg => pkg.trim())
-              .filter(pkg => pkg.length > 0);
-            
-            for (const packageName of packagesList) {
-              if (!packagesToInstall.includes(packageName)) {
-                packagesToInstall.push(packageName);
-                console.log(`[generate-ai-code-stream] Package from <packages> tag: ${packageName}`);
-                await sendProgress({ 
-                  type: 'package', 
-                  name: packageName,
-                  message: `Package detected: ${packageName}`
-                });
-              }
-            }
-          }
-        }
-        
-        // Function to extract packages from import statements
-        function extractPackagesFromCode(content: string): string[] {
-          const packages: string[] = [];
-          // Match ES6 imports
-          const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"]([^'"]+)['"]/g;
-          let importMatch;
-          
-          while ((importMatch = importRegex.exec(content)) !== null) {
-            const importPath = importMatch[1];
-            // Skip relative imports and built-in React
-            if (!importPath.startsWith('.') && !importPath.startsWith('/') && 
-                importPath !== 'react' && importPath !== 'react-dom' &&
-                !importPath.startsWith('@/')) {
-              // Extract package name (handle scoped packages like @heroicons/react)
-              const packageName = importPath.startsWith('@') 
-                ? importPath.split('/').slice(0, 2).join('/')
-                : importPath.split('/')[0];
-              
-              if (!packages.includes(packageName)) {
-                packages.push(packageName);
-              }
-            }
-          }
-          
-          return packages;
-        }
-        
-        // Parse files and send progress for each
-        const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-        const files = [];
-        let match;
-        
-        while ((match = fileRegex.exec(generatedCode)) !== null) {
-          const filePath = match[1];
-          const content = match[2].trim();
-          files.push({ path: filePath, content });
-          
-          // Extract packages from file content - ONLY for edits
-          if (isEdit) {
-            const filePackages = extractPackagesFromCode(content);
-            for (const pkg of filePackages) {
-              if (!packagesToInstall.includes(pkg)) {
-                packagesToInstall.push(pkg);
-                console.log(`[generate-ai-code-stream] Package detected from imports: ${pkg}`);
-                await sendProgress({ 
-                  type: 'package', 
-                  name: pkg,
-                  message: `Package detected from imports: ${pkg}`
-                });
-              }
-            }
-          }
-          
-          // Send progress for each file (reusing componentCount from streaming)
-          if (filePath.includes('components/')) {
-            const componentName = filePath.split('/').pop()?.replace('.jsx', '') || 'Component';
-            await sendProgress({ 
-              type: 'component', 
-              name: componentName,
-              path: filePath,
-              index: componentCount
-            });
-          } else if (filePath.includes('App.jsx')) {
-            await sendProgress({ 
-              type: 'app', 
-              message: 'Generated main App.jsx',
-              path: filePath
-            });
-          }
-        }
-        
         // Extract explanation
         const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
-        const explanation = explanationMatch ? explanationMatch[1].trim() : 'Code generated successfully!';
+        explanation = explanationMatch ? explanationMatch[1].trim() : 'Code generated successfully!';
         
         // Validate generated code for truncation issues
         const truncationWarnings: string[] = [];
@@ -1726,7 +1823,7 @@ Provide the complete file content without any truncation. Include all necessary 
                 
                 // Make a focused API call to complete this specific file
                 // Create a new client for the completion based on the provider
-                let completionClient;
+                let completionClient: any;
                 if (model.includes('gpt') || model.includes('openai')) {
                   completionClient = openai;
                 } else if (model.includes('claude')) {
@@ -1752,7 +1849,7 @@ Provide the complete file content without any truncation. Include all necessary 
                 }
                 
                 const completionResult = await streamText({
-                  model: completionClient(completionModelName),
+                  model: completionClient.chat ? completionClient.chat(completionModelName) : completionClient(completionModelName),
                   messages: [
                     { 
                       role: 'system', 
