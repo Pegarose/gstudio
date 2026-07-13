@@ -51,6 +51,63 @@ async function migrate() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS generations (
+      id UUID PRIMARY KEY,
+      project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id TEXT,
+      mode VARCHAR(20) NOT NULL,
+      prompt TEXT NOT NULL,
+      target_url TEXT,
+      stage VARCHAR(30) NOT NULL DEFAULT 'created',
+      status VARCHAR(20) NOT NULL DEFAULT 'queued',
+      sandbox_id TEXT,
+      brief_json JSONB,
+      plan_json JSONB,
+      artifact_json JSONB,
+      validation_json JSONB,
+      error_json JSONB,
+      repair_count INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS generations_project_created_idx
+      ON generations(project_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS generation_messages (
+      id BIGSERIAL PRIMARY KEY,
+      generation_id UUID NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+      role VARCHAR(20) NOT NULL,
+      content TEXT NOT NULL,
+      parts_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_events (
+      id BIGSERIAL PRIMARY KEY,
+      generation_id UUID NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+      sequence INT NOT NULL,
+      type VARCHAR(40) NOT NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(generation_id, sequence)
+    );
+
+    CREATE TABLE IF NOT EXISTS sandbox_leases (
+      sandbox_id TEXT PRIMARY KEY,
+      project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      generation_id UUID REFERENCES generations(id) ON DELETE SET NULL,
+      provider VARCHAR(20) NOT NULL,
+      state VARCHAR(20) NOT NULL,
+      url TEXT,
+      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ
+    );
+  `);
   
   console.log('Database tables migrated successfully.');
   await client.end();
