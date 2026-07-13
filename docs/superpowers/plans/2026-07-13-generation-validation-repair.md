@@ -34,7 +34,7 @@
 - Consumes: `GenerationArtifact`, `ProductBrief`, `DesignPlan`.
 - Produces: `ValidationReportSchema`, `RuleViolation`, and `validateStaticRules(input)`.
 
-- [ ] **Step 1: Write deterministic violation tests**
+- [x] **Step 1: Write deterministic violation tests**
 
 ```ts
 test("static validation detects multiple H1s, inline colors, and italic headings", () => {
@@ -54,7 +54,7 @@ test("invented proof is rejected when absent from supplied facts", () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -64,7 +64,7 @@ npx tsx --test tests/validation/static-validator.test.ts
 
 Expected: FAIL because validation modules do not exist.
 
-- [ ] **Step 3: Implement schemas and static validators**
+- [x] **Step 3: Implement schemas and static validators**
 
 Define `CheckResult`, `ResponsiveCheckResult`, `VisualEvaluation`, `RepairEligibility`, and `ValidationReport` as Zod schemas.
 
@@ -86,7 +86,7 @@ Implement these first-pass rules:
 
 Invented proof checks numeric claims, `trusted by`, `customers`, `awards`, and testimonial quotation patterns against normalized `contentFacts` and allowed placeholders.
 
-- [ ] **Step 4: Run validation tests**
+- [x] **Step 4: Run validation tests**
 
 Run:
 
@@ -97,7 +97,7 @@ npx tsc --noEmit
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/generation/contracts/validation.ts lib/generation/validation tests/validation tests/fixtures/validation
