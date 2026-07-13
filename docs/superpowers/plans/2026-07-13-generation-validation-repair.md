@@ -271,7 +271,7 @@ git commit -m "feat: validate runtime accessibility and responsiveness"
 - Consumes: source `ReferenceBundle`, output screenshots, source/output layout evidence.
 - Produces: separate structural, typography, color, spacing, responsive, and screenshot-diff scores.
 
-- [ ] **Step 1: Write per-axis comparison tests**
+- [x] **Step 1: Write per-axis comparison tests**
 
 ```ts
 test("typography mismatch does not hide behind a good screenshot score", async () => {
@@ -284,7 +284,7 @@ test("typography mismatch does not hide behind a good screenshot score", async (
 });
 ```
 
-- [ ] **Step 2: Install image comparison dependencies and verify failure**
+- [x] **Step 2: Install image comparison dependencies and verify failure**
 
 Run:
 
@@ -295,7 +295,7 @@ npx tsx --test tests/validation/visual-evaluator.test.ts
 
 Expected: FAIL because the evaluator does not exist.
 
-- [ ] **Step 3: Implement separate visual axes**
+- [x] **Step 3: Implement separate visual axes**
 
 Use normalized landmark order and relative bounding boxes for structure. Compare font role, size ratio, weight, and line-height for typography. Compare token/color histograms for color and normalized gaps/padding for spacing.
 
@@ -308,7 +308,7 @@ const screenshotScore = 1 - mismatchedPixels / (width * height);
 
 Resize only when source and output target the same viewport but differ by device-pixel ratio. Do not stretch different aspect ratios into a match. Store diff images as artifacts.
 
-- [ ] **Step 4: Run visual tests**
+- [x] **Step 4: Run visual tests**
 
 Run:
 
@@ -318,7 +318,7 @@ npx tsx --test tests/validation/visual-evaluator.test.ts
 
 Expected: PASS with independently asserted axis scores.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add package.json package-lock.json lib/generation/validation/visual-evaluator.ts lib/generation/validation/layout-comparator.ts lib/generation/validation/image-comparator.ts tests/validation/visual-evaluator.test.ts tests/fixtures/visual
