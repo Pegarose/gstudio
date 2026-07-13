@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getLanguageModel } from "../../lib/ai/provider-manager";
+import { appConfig } from "../../config/app.config";
+import { getLanguageModel, getProviderForModel } from "../../lib/ai/provider-manager";
 import { resolveModelRoute } from "../../lib/models/registry";
 import { createModelRouter } from "../../lib/models/router";
 
@@ -73,4 +74,56 @@ test("route credentials override environment settings when creating a language m
   const headers = await internalModel.config.headers();
   assert.equal(headers.Authorization === "Bearer route-key", true);
   assert.equal(internalModel.config.url({ path: "/responses" }).toString().startsWith("https://models.example.test/v1"), true);
+});
+
+type ModelApiConfigEntry = {
+  provider: "openai";
+  model: string;
+  apiKey?: string;
+  baseURL?: string;
+};
+
+async function legacyModelSettings(modelId: string) {
+  const resolution = getProviderForModel(modelId);
+  const languageModel = (resolution.client as unknown as (model: string) => unknown)(resolution.actualModel) as {
+    config: { headers: () => Promise<Record<string, string | undefined>>; url: (options: { path: string }) => URL };
+  };
+
+  return { headers: await languageModel.config.headers(), url: languageModel.config.url({ path: "/responses" }).toString() };
+}
+
+test("legacy model config credentials apply when AI Gateway is absent", async () => {
+  const modelId = "test-legacy-direct";
+  const configs = appConfig.ai.modelApiConfig as Record<string, ModelApiConfigEntry>;
+  const previousGatewayKey = process.env.AI_GATEWAY_API_KEY;
+  configs[modelId] = { provider: "openai", model: "custom-model", apiKey: "legacy-route-key", baseURL: "https://legacy.example.test/v1" };
+  delete process.env.AI_GATEWAY_API_KEY;
+
+  try {
+    const settings = await legacyModelSettings(modelId);
+    assert.equal(settings.headers.Authorization === "Bearer legacy-route-key", true);
+    assert.equal(settings.url.startsWith("https://legacy.example.test/v1"), true);
+  } finally {
+    delete configs[modelId];
+    if (previousGatewayKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = previousGatewayKey;
+  }
+});
+
+test("AI Gateway overrides legacy model config credentials", async () => {
+  const modelId = "test-legacy-gateway";
+  const configs = appConfig.ai.modelApiConfig as Record<string, ModelApiConfigEntry>;
+  const previousGatewayKey = process.env.AI_GATEWAY_API_KEY;
+  configs[modelId] = { provider: "openai", model: "custom-model", apiKey: "legacy-route-key", baseURL: "https://legacy.example.test/v1" };
+  process.env.AI_GATEWAY_API_KEY = "gateway-key";
+
+  try {
+    const settings = await legacyModelSettings(modelId);
+    assert.equal(settings.headers.Authorization === "Bearer gateway-key", true);
+    assert.equal(settings.url.startsWith("https://ai-gateway.vercel.sh/v1"), true);
+  } finally {
+    delete configs[modelId];
+    if (previousGatewayKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = previousGatewayKey;
+  }
 });

@@ -100,7 +100,11 @@ function legacyRouteForModel(modelId: string): ModelRoute {
     baseURL?: string;
   } | undefined;
   if (configured) {
-    return { id: `legacy:${modelId}`, provider: configured.provider, model: configured.model, apiKey: configured.apiKey, baseURL: configured.baseURL, capabilities: { vision: false, structuredOutput: false, reasoning: false, toolUse: false }, timeoutMs: 45_000, fallbacks: [] };
+    const legacyOverrides = process.env.AI_GATEWAY_API_KEY
+      ? {}
+      : { apiKey: configured.apiKey, baseURL: configured.baseURL };
+
+    return { id: `legacy:${modelId}`, provider: configured.provider, model: configured.model, ...legacyOverrides, capabilities: { vision: false, structuredOutput: false, reasoning: false, toolUse: false }, timeoutMs: 45_000, fallbacks: [] };
   }
 
   if (modelId === 'moonshotai/kimi-k2-instruct-0905') return legacyModelRoute(modelId, 'groq');
