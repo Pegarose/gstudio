@@ -1,3 +1,4 @@
+import { posix as posixPath } from "node:path";
 import {
   getSandboxLease,
   markSandboxLeaseState,
@@ -9,6 +10,7 @@ import type {
   CommandSpec,
   ReadinessResult,
   ReadinessTarget,
+  SandboxFileSnapshot,
   SandboxService,
 } from "./contracts";
 import { ProviderRegistry, type SandboxProviderRegistry } from "./provider-registry";
@@ -30,6 +32,21 @@ const defaultLeases: Required<SandboxLeaseRepository> = {
   upsertSandboxLease,
   markSandboxLeaseState,
 };
+
+const SNAPSHOT_PATH = /^(?:src|public)\/[A-Za-z0-9][A-Za-z0-9._/-]*$|^index\.html$/;
+const ABSENT_FILE_ERROR = /\bENOENT\b|no such file or directory|FileNotFoundError/i;
+
+function normalizeSnapshotPath(path: string): string {
+  const normalized = posixPath.normalize(path);
+  if (!SNAPSHOT_PATH.test(normalized)) {
+    throw new Error(`Unsafe sandbox snapshot path: ${path}`);
+  }
+  return normalized;
+}
+
+function isAbsentFileError(error: unknown): boolean {
+  return error instanceof Error && ABSENT_FILE_ERROR.test(error.message);
+}
 
 export function createSandboxService(
   dependencies: CreateSandboxServiceDependencies = {},
@@ -84,6 +101,42 @@ export function createSandboxService(
       const provider = await resolve(sandboxId);
       for (const file of files) {
         await provider.writeFile(file.path, file.content);
+      }
+    },
+
+    async snapshotFiles(sandboxId, paths) {
+      const provider = await resolve(sandboxId);
+      const snapshots: SandboxFileSnapshot[] = [];
+
+      for (const path of paths) {
+        const normalizedPath = normalizeSnapshotPath(path);
+        try {
+          snapshots.push({ path: normalizedPath, content: await provider.readFile(normalizedPath) });
+        } catch (error) {
+          if (!isAbsentFileError(error)) {
+            throw error;
+          }
+          snapshots.push({ path: normalizedPath, content: null });
+        }
+      }
+
+      return snapshots;
+    },
+
+    async restoreFiles(sandboxId, snapshots) {
+      const provider = await resolve(sandboxId);
+
+      for (const snapshot of snapshots) {
+        const normalizedPath = normalizeSnapshotPath(snapshot.path);
+        if (snapshot.content !== null) {
+          await provider.writeFile(normalizedPath, snapshot.content);
+          continue;
+        }
+
+        const result = await provider.runCommand(`rm -f -- ${normalizedPath}`);
+        if (!result.success) {
+          throw new Error(`Failed to remove sandbox file during restore: ${normalizedPath}`);
+        }
       }
     },
 

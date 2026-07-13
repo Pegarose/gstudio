@@ -17,6 +17,11 @@ export interface ReadinessResult {
   lastError: string | null;
 }
 
+export interface SandboxFileSnapshot {
+  path: string;
+  content: string | null;
+}
+
 export interface SandboxService {
   allocate(input: {
     projectId: string;
@@ -26,6 +31,8 @@ export interface SandboxService {
   connect(sandboxId: string): Promise<SandboxInfo>;
   setupViteApp(sandboxId: string): Promise<void>;
   writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void>;
+  snapshotFiles(sandboxId: string, paths: string[]): Promise<SandboxFileSnapshot[]>;
+  restoreFiles(sandboxId: string, snapshots: SandboxFileSnapshot[]): Promise<void>;
   installPackages(sandboxId: string, packages: string[]): Promise<CommandResult>;
   startDevServer(sandboxId: string): Promise<void>;
   waitUntilReady(sandboxId: string, target: ReadinessTarget): Promise<ReadinessResult>;
