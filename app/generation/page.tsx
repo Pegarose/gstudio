@@ -2408,6 +2408,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     ...prev,
                     status: data.message || `Installing ${data.name}`
                   }));
+                } else if (data.type === "validation") {
+                  setGenerationProgress((previous) => ({
+                    ...previous,
+                    status: data.repairCount > 0
+                      ? `Quality gate passed after ${data.repairCount} repair`
+                      : "Quality gate passed",
+                  }));
                 } else if (data.type === 'complete') {
                   generatedCode = data.generatedCode;
                   explanation = data.explanation;
@@ -3672,6 +3679,13 @@ Focus on the key sections and content, making it clean and modern.`;
                     
                     return updatedState;
                   });
+                  } else if (data.type === "validation") {
+                    setGenerationProgress((previous) => ({
+                      ...previous,
+                      status: data.repairCount > 0
+                        ? `Quality gate passed after ${data.repairCount} repair`
+                        : "Quality gate passed",
+                    }));
                   } else if (data.type === 'complete') {
                     generatedCode = data.generatedCode;
                     explanation = data.explanation;

@@ -53,6 +53,19 @@ test('generation and edit intent routes resolve only configured TR4 models', () 
   assert.doesNotMatch(intentRoute, /OPENCODEGO_API_KEY|opencodeClient|provider === 'opencode'/);
 });
 
+test('generation route validates and repairs generated code before completion', () => {
+  assert.match(route, /runGenerationQualityGate/);
+  assert.match(route, /resolveTeamModelRoute\("qa", qaModel\)/);
+  assert.match(route, /resolveModelRoute\("repair"\)/);
+  assert.match(route, /type:\s*["']validation["']/);
+
+  const qualityGateIndex = route.indexOf('runGenerationQualityGate({');
+  const completeIndex = route.lastIndexOf("type: 'complete'");
+  assert.ok(qualityGateIndex >= 0, 'quality gate invocation is present');
+  assert.ok(completeIndex >= 0, 'complete event is present');
+  assert.ok(qualityGateIndex < completeIndex, 'quality gate runs before completion');
+});
+
 test('runtime and generation specification do not define an unconfigured Cline provider', () => {
   assert.doesNotMatch(providerContracts, /\|\s*["']cline["']/);
   assert.doesNotMatch(providerManager, /case ["']cline["']/);

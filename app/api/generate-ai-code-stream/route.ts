@@ -10,6 +10,8 @@ import { appConfig } from '@/config/app.config';
 import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager';
 import { resolveModelRoute } from '@/lib/models/registry';
 import { resolveTeamModelRoute } from '@/lib/models/team-model-policy';
+import { GenerationQualityError, runGenerationQualityGate } from "@/lib/generation/quality-gate";
+import { repairGeneratedCode, reviewGeneratedCode } from "@/lib/generation/tr4-quality-service";
 
 // Force dynamic route to enable streaming
 export const dynamic = 'force-dynamic';
@@ -1751,6 +1753,47 @@ Provide the complete file content without any truncation. Include all necessary 
           }
         }
         
+        const qaRoute = resolveTeamModelRoute("qa", qaModel);
+        const repairRoute = resolveModelRoute("repair");
+        const qaLanguageModel = getLanguageModel(qaRoute);
+        const repairLanguageModel = getLanguageModel(repairRoute);
+        const qualityResult = await runGenerationQualityGate({
+          candidate: generatedCode,
+          maxRepairs: 1,
+          onStage: async (stage, repairCount) => {
+            await sendProgress({
+              type: "status",
+              stage,
+              repairCount,
+              message: stage === "validating"
+                ? "QA validator is reviewing the generated files..."
+                : "Repair model is correcting blocking findings...",
+            });
+          },
+          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt, candidate }),
+          repair: (candidate, validation) => repairGeneratedCode({ model: repairLanguageModel, candidate, validation }),
+        });
+
+        generatedCode = qualityResult.candidate;
+        files.length = 0;
+        componentCount = 0;
+        const validatedFileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+        let validatedFileMatch;
+        while ((validatedFileMatch = validatedFileRegex.exec(generatedCode)) !== null) {
+          const filePath = validatedFileMatch[1];
+          files.push({ path: filePath, content: validatedFileMatch[2].trim() });
+          if (filePath.includes("components/")) {
+            componentCount += 1;
+          }
+        }
+
+        await sendProgress({
+          type: "validation",
+          validation: qualityResult.validation,
+          repairCount: qualityResult.repairCount,
+          message: "Quality gate passed",
+        });
+
         // Send completion with packages info
         await sendProgress({ 
           type: 'complete', 
@@ -1758,6 +1801,8 @@ Provide the complete file content without any truncation. Include all necessary 
           explanation,
           files: files.length,
           components: componentCount,
+          validation: qualityResult.validation,
+          repairCount: qualityResult.repairCount,
           model,
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
@@ -1794,8 +1839,16 @@ Provide the complete file content without any truncation. Include all necessary 
       } catch (error) {
         console.error('[generate-ai-code-stream] Stream processing error:', error);
         
+        if (error instanceof GenerationQualityError) {
+          await sendProgress({
+            type: 'error',
+            error: error.message,
+            validation: error.validation,
+            repairCount: error.repairCount,
+            findings: error.validation.findings,
+          });
         // Check if it's a tool validation error
-        if ((error as any).message?.includes('tool call validation failed')) {
+        } else if ((error as any).message?.includes('tool call validation failed')) {
           console.error('[generate-ai-code-stream] Tool call validation error - this may be due to the AI model sending incorrect parameters');
           await sendProgress({ 
             type: 'warning', 

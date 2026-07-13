@@ -73,6 +73,12 @@ test('builder creates a project before requesting an explicit-ID sandbox', () =>
   assert.doesNotMatch(source, /body: JSON\.stringify\(\{\}\)/);
 });
 
+test('builder reports a passed generation quality gate', () => {
+  assert.match(source, /data\.type === ["']validation["']/);
+  assert.match(source, /Quality gate passed/);
+  assert.match(source, /repairCount/);
+});
+
 test('auto-start waits for the explicit sandbox and carries its ID through apply', () => {
   const source = readFileSync(builderPage, 'utf8');
 
