@@ -23,12 +23,17 @@ interface SourceLocation {
   line: number;
 }
 
-interface InteractiveElement extends SourceLocation {}
+interface InteractiveElement extends SourceLocation {
+  hasFocusVisibleUtility: boolean;
+}
 
 interface PrimaryCta extends SourceLocation {}
 
 const HEADING_TAG = /^h[1-6]$/i;
 const INTERACTIVE_TAG = new Set(["button", "input", "select", "textarea"]);
+const SEMANTIC_TEXT_BLOCK_TAGS = new Set(["p", "blockquote", "li", "figcaption", "label", "button", "a"]);
+const ARBITRARY_COLOR_UTILITY = /(?:^|\s)(?:text|bg|border|from|to|via|fill|stroke|ring|outline|decoration|shadow|caret|accent)-\[(?:#[\da-f]{3,8}|(?:rgba?|hsla?|oklch|oklab|hwb)\()/i;
+const ARBITRARY_FONT_UTILITY = /(?:^|\s)font-\[(?!var\()[^\]]+\]/i;
 const NUMERIC_CLAIM = /\b\d+(?:[,.]\d+)*(?:\s*(?:%|x|customers?|teams?|users?|awards?))?\b/i;
 const PROOF_CLAIM = /\btrusted by\b|\bcustomers?\b|\bawards?\b|["“][^"”]{12,}["”]/i;
 
@@ -85,7 +90,7 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
       line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
     });
 
-    const visit = (node: ts.Node): void => {
+    const visit = (node: ts.Node, suppressVisibleText = false): void => {
       if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
         const packageName = packageNameFor(node.moduleSpecifier.text);
         if (packageName) {
@@ -93,14 +98,14 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
         }
       }
 
-      if (ts.isJsxText(node)) {
+      if (!suppressVisibleText && ts.isJsxText(node)) {
         const value = node.getText(sourceFile).trim();
         if (value) {
           visibleText.push({ value, location: locationFor(node) });
         }
       }
 
-      if (ts.isJsxExpression(node) && node.expression && isTextLiteral(node.expression)) {
+      if (!suppressVisibleText && ts.isJsxExpression(node) && node.expression && isTextLiteral(node.expression)) {
         visibleText.push({ value: node.expression.text, location: locationFor(node.expression) });
       }
 
@@ -110,9 +115,19 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
 
       if (ts.isJsxElement(node)) {
         const tagName = node.openingElement.tagName.getText(sourceFile).toLowerCase();
+        const isSemanticTextBlock = SEMANTIC_TEXT_BLOCK_TAGS.has(tagName) || HEADING_TAG.test(tagName);
+        if (isSemanticTextBlock && !suppressVisibleText) {
+          const value = normalizeWhitespace(jsxText(node.children));
+          if (value) {
+            visibleText.push({ value, location: locationFor(node.openingElement) });
+          }
+        }
         if (isPrimaryCta(node, tagName, plan.primaryCta)) {
           primaryCtas.push(locationFor(node.openingElement));
         }
+
+        ts.forEachChild(node, (child) => visit(child, suppressVisibleText || isSemanticTextBlock));
+        return;
       }
 
       ts.forEachChild(node, visit);
@@ -158,8 +173,9 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
     }
   }
 
-  if (interactiveElements.length > 0 && !artifact.files.some((file) => /focus-visible/i.test(file.content))) {
-    const first = interactiveElements[0];
+  const missingFocusVisible = interactiveElements.find((element) => !element.hasFocusVisibleUtility);
+  if (missingFocusVisible && !artifact.files.some(hasFocusVisibleSelector)) {
+    const first = missingFocusVisible;
     violations.push(violation(
       "missing-focus-visible",
       first.file,
@@ -209,10 +225,11 @@ function inspectOpeningElement(
     h1s.push(location);
   }
   if (INTERACTIVE_TAG.has(tagName) || (tagName === "a" && hasAttribute(node, "href"))) {
-    interactiveElements.push(location);
+    interactiveElements.push({ ...location, hasFocusVisibleUtility: hasFocusVisibleUtility(node) });
   }
 
   const styleAttribute = attributeNamed(node, "style");
+  const classText = classNameText(node);
   if (styleAttribute && hasInlineStyleProperty(styleAttribute, /color/i)) {
     violations.push(violation(
       "inline-color",
@@ -229,6 +246,25 @@ function inspectOpeningElement(
       location.line,
       "Font families must be defined in named tokens instead of inline JSX styles.",
       styleAttribute.getText(sourceFile),
+    ));
+  }
+
+  if (classText && ARBITRARY_COLOR_UTILITY.test(classText)) {
+    violations.push(violation(
+      "inline-color",
+      file,
+      location.line,
+      "Colors must be defined in named tokens instead of arbitrary literal utility values.",
+      classText,
+    ));
+  }
+  if (classText && ARBITRARY_FONT_UTILITY.test(classText)) {
+    violations.push(violation(
+      "inline-font-family",
+      file,
+      location.line,
+      "Font families must be defined in named tokens instead of arbitrary literal utility values.",
+      classText,
     ));
   }
 
@@ -278,13 +314,24 @@ function hasInlineStyleProperty(attribute: ts.JsxAttribute, propertyName: RegExp
 }
 
 function hasItalicClass(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean {
-  const classAttribute = attributeNamed(node, "classname");
-  const initializer = classAttribute?.initializer;
-  if (initializer && ts.isStringLiteral(initializer)) {
-    return /(?:^|\s)italic(?:\s|$)/i.test(initializer.text);
-  }
+  return /(?:^|\s)italic(?:\s|$)/i.test(classNameText(node) ?? "");
+}
+
+function classNameText(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): string | null {
+  const initializer = attributeNamed(node, "classname")?.initializer;
+  if (initializer && ts.isStringLiteral(initializer)) return initializer.text;
   const expression = expressionFromInitializer(initializer);
-  return Boolean(expression && isTextLiteral(expression) && /(?:^|\s)italic(?:\s|$)/i.test(expression.text));
+  return expression && isTextLiteral(expression) ? expression.text : null;
+}
+
+function hasFocusVisibleUtility(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean {
+  return /(?:^|\s)focus-visible:[^\s]+/i.test(classNameText(node) ?? "");
+}
+
+function hasFocusVisibleSelector(file: ValidationFile): boolean {
+  if (!/\.(?:css|scss|sass|less)$/i.test(file.path)) return false;
+  const withoutComments = file.content.replace(/\/\*[\s\S]*?\*\//g, "");
+  return /(^|[}\s,])[^{}]*:focus-visible\b[^{}]*\{/i.test(withoutComments);
 }
 
 function hasInlineItalicStyle(attribute: ts.JsxAttribute | undefined): boolean {
@@ -310,6 +357,7 @@ function jsxText(children: readonly ts.JsxChild[]): string {
   return children.map((child) => {
     if (ts.isJsxText(child)) return child.getText();
     if (ts.isJsxExpression(child) && child.expression && isTextLiteral(child.expression)) return child.expression.text;
+    if (ts.isJsxElement(child) || ts.isJsxFragment(child)) return jsxText(child.children);
     return "";
   }).join(" ");
 }
@@ -323,7 +371,8 @@ function expressionFromInitializer(initializer: ts.JsxAttributeValue | undefined
 }
 
 function isUnsafePath(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.split(/[\\/]/).includes("..");
+  const normalized = path.replace(/\\/g, "/");
+  return normalized.startsWith("/") || normalized.startsWith("~/") || /^[A-Za-z]:/.test(normalized) || normalized.split("/").includes("..");
 }
 
 function packageNameFor(importPath: string): string | null {
@@ -364,7 +413,11 @@ function isAllowedProof(text: string, facts: string[], placeholders: string[]): 
 }
 
 function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
+  return normalizeWhitespace(value).toLowerCase();
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function violation(
