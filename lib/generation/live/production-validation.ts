@@ -15,13 +15,20 @@ import {
   type ValidationRunnerDependencies,
 } from "../validation/validation-runner";
 import {
+  adaptCapturedVisualEvidence,
   evaluateVisualFidelity,
-  type VisualEvidenceBundle,
+  type CapturedImageReader,
+  type CapturedVisualEvidenceBundle,
 } from "../validation/visual-evaluator";
+import type {
+  DurableBrandLanguageBundle,
+  DurableCloneReferenceEvidence,
+} from "../validation/validation-runner";
 
 export interface ProductionValidationDependencies {
   sandbox: Pick<SandboxService, "runCommand">;
   captureOutput: ValidationRunnerDependencies["captureOutput"];
+  readPng: CapturedImageReader["readPng"];
   validateBrowser?: (input: {
     url: string;
     desktopWidth: number;
@@ -74,18 +81,23 @@ export function createProductionValidationDependencies(
       }
 
       if (input.mode === "inspiration") {
-        const brandLanguage = CheckResultSchema.safeParse(input.reference?.brandLanguage);
-        if (!brandLanguage.success) throw referenceEvidenceUnavailable();
-        return { mode: "inspiration", brandLanguage: brandLanguage.data };
+        const brandLanguage = asDurableBrandLanguageBundle(input.reference?.brandLanguage);
+        if (!brandLanguage) throw referenceEvidenceUnavailable();
+        return { mode: "inspiration", brandLanguage: brandLanguage.evaluation };
       }
 
-      const source = asVisualEvidenceBundle(input.reference?.source);
-      const output = asVisualEvidenceBundle(input.capture.output);
+      const source = asDurableCloneReferenceEvidence(input.reference?.source);
+      const output = asCapturedVisualEvidenceBundle(input.capture.output);
       if (!source || !output) throw referenceEvidenceUnavailable();
+
+      const [sourceEvidence, outputEvidence] = await Promise.all([
+        adaptCapturedVisualEvidence(source, { readPng: dependencies.readPng }),
+        adaptCapturedVisualEvidence(output, { readPng: dependencies.readPng }),
+      ]);
 
       return {
         mode: "clone",
-        visual: evaluateVisualFidelity({ source, output }),
+        visual: evaluateVisualFidelity({ source: sourceEvidence, output: outputEvidence }),
       };
     },
   };
@@ -104,18 +116,48 @@ function referenceEvidenceUnavailable(): ValidationStepError {
   return new ValidationStepError("capture-policy", REFERENCE_EVIDENCE_UNAVAILABLE);
 }
 
-function asVisualEvidenceBundle(value: unknown): VisualEvidenceBundle | null {
+function asDurableCloneReferenceEvidence(value: unknown): DurableCloneReferenceEvidence | null {
   if (!isRecord(value)) return null;
-  if (!isScreenshotEvidence(value.desktopScreenshot) || !isScreenshotEvidence(value.mobileScreenshot)) return null;
-  if (!isLayoutEvidence(value.desktopLayout) || !isLayoutEvidence(value.mobileLayout)) return null;
-  return value as unknown as VisualEvidenceBundle;
+  if (value.kind !== "clone-reference-v1") return null;
+  if (!isNonEmptyString(value.captureId) || !isHttpUrl(value.sourceUrl) || !isIsoTimestamp(value.capturedAt)) return null;
+  return asCapturedVisualEvidenceBundle(value) as DurableCloneReferenceEvidence | null;
 }
 
-function isScreenshotEvidence(value: unknown): boolean {
-  if (!isRecord(value) || !Buffer.isBuffer(value.png) || !isRecord(value.viewport)) return false;
-  return isPositiveFinite(value.viewport.width)
-    && isPositiveFinite(value.viewport.height)
-    && isPositiveFinite(value.viewport.devicePixelRatio);
+function asDurableBrandLanguageBundle(value: unknown): DurableBrandLanguageBundle | null {
+  if (!isRecord(value)) return null;
+  if (value.kind !== "brand-language-v1") return null;
+  const artifactKey = value.artifactKey;
+  const sourceUrl = value.sourceUrl;
+  const capturedAt = value.capturedAt;
+  if (!isNonEmptyString(artifactKey) || !isNonEmptyString(sourceUrl) || !isNonEmptyString(capturedAt)) return null;
+  if (!isHttpUrl(sourceUrl) || !isIsoTimestamp(capturedAt)) return null;
+
+  const evaluation = CheckResultSchema.safeParse(value.evaluation);
+  if (!evaluation.success) return null;
+
+  return {
+    kind: "brand-language-v1",
+    artifactKey,
+    sourceUrl,
+    capturedAt,
+    evaluation: evaluation.data,
+  };
+}
+
+function asCapturedVisualEvidenceBundle(value: unknown): CapturedVisualEvidenceBundle | null {
+  if (!isRecord(value)) return null;
+  if (!isCapturedImageReference(value.desktopScreenshot) || !isCapturedImageReference(value.mobileScreenshot)) return null;
+  if (!isLayoutEvidence(value.desktopLayout) || !isLayoutEvidence(value.mobileLayout)) return null;
+  return value as unknown as CapturedVisualEvidenceBundle;
+}
+
+function isCapturedImageReference(value: unknown): boolean {
+  if (!isRecord(value) || "png" in value) return false;
+  return value.mediaType === "image/png"
+    && isNonEmptyString(value.artifactKey)
+    && isPositiveFinite(value.width)
+    && isPositiveFinite(value.height)
+    && isPositiveFinite(value.devicePixelRatio);
 }
 
 function isLayoutEvidence(value: unknown): boolean {
@@ -135,4 +177,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isPositiveFinite(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isHttpUrl(value: unknown): boolean {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isIsoTimestamp(value: unknown): boolean {
+  return isNonEmptyString(value) && Number.isFinite(Date.parse(value));
 }

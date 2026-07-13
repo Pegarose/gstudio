@@ -50,6 +50,8 @@ export function createLiveValidationActivation({
     async activate(input: LiveActivationInput): Promise<LiveActivationResult> {
       const snapshots = await sandbox.snapshotFiles(input.sandboxId, input.snapshotPaths);
       let report: ValidationReport;
+      let rollback: Awaited<ReturnType<typeof restoreOnce>> | undefined;
+      let terminalPersistenceStarted = false;
 
       try {
         await input.applyCandidate();
@@ -63,27 +65,42 @@ export function createLiveValidationActivation({
           });
         }
 
-      } catch (error) {
-        report = terminalActivationFailureReport(error);
-      }
+        if (report.finalStatus === "passed") {
+          terminalPersistenceStarted = true;
+          await orchestrator.persistFinal({
+            generationId: input.generation.id,
+            report,
+            status: "passed",
+          });
+          return { status: "passed", report, rolledBack: false };
+        }
 
-      if (report.finalStatus === "passed") {
+        rollback = await restoreOnce(sandbox, input.sandboxId, snapshots);
+        report = terminalizeFailedReport(report, rollback.evidence);
+        terminalPersistenceStarted = true;
         await orchestrator.persistFinal({
           generationId: input.generation.id,
           report,
-          status: "passed",
+          status: "failed",
         });
-        return { status: "passed", report, rolledBack: false };
-      }
+        return { status: "failed", report, rolledBack: rollback.completed };
+      } catch (error) {
+        rollback ??= await restoreOnce(sandbox, input.sandboxId, snapshots);
 
-      const rollback = await restoreOnce(sandbox, input.sandboxId, snapshots);
-      report = terminalizeFailedReport(report, rollback.evidence);
-      await orchestrator.persistFinal({
-        generationId: input.generation.id,
-        report,
-        status: "failed",
-      });
-      return { status: "failed", report, rolledBack: rollback.completed };
+        if (terminalPersistenceStarted) {
+          throw error;
+        }
+
+        report = terminalActivationFailureReport(error);
+        report = terminalizeFailedReport(report, rollback.evidence);
+        terminalPersistenceStarted = true;
+        await orchestrator.persistFinal({
+          generationId: input.generation.id,
+          report,
+          status: "failed",
+        });
+        return { status: "failed", report, rolledBack: rollback.completed };
+      }
     },
   };
 }

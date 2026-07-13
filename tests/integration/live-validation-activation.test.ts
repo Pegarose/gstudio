@@ -12,9 +12,11 @@ import type {
 } from "../../lib/generation/contracts/validation";
 import {
   ValidationStepError,
+  runValidation,
   type ValidationRunInput,
 } from "../../lib/generation/validation/validation-runner";
 import type { SandboxFileSnapshot, SandboxService } from "../../lib/sandbox/service/contracts";
+import { createVisualFixtures } from "../fixtures/visual/visual-fixtures";
 
 const artifact: GenerationArtifact = {
   files: [{
@@ -80,6 +82,7 @@ type FixtureOptions = {
   repairedReport?: ValidationReport;
   mode?: ValidationRunInput["mode"];
   reference?: ValidationRunInput["reference"];
+  persistFinalError?: Error;
 };
 
 function fixture(options: FixtureOptions = {}) {
@@ -99,6 +102,7 @@ function fixture(options: FixtureOptions = {}) {
   };
   const repository = {
     persisted: [] as Array<{ generationId: string; report: ValidationReport; status: "passed" | "failed" }>,
+    persistenceAttempts: 0,
   };
   const repair = { generateCalls: 0 };
   const initialReport = options.initialReport
@@ -112,6 +116,10 @@ function fixture(options: FixtureOptions = {}) {
       return options.repairedReport ?? initialReport;
     },
     persistFinal: async (entry) => {
+      repository.persistenceAttempts += 1;
+      if (options.persistFinalError) {
+        throw options.persistFinalError;
+      }
       repository.persisted.push(entry);
     },
   };
@@ -167,6 +175,22 @@ test("a repair that passes revalidation keeps the repair and persists passed onc
   assert.equal(subject.repository.persisted[0]?.status, "passed");
 });
 
+test("a passed report rolls back once and rejects when terminal persistence fails", async () => {
+  const subject = fixture({
+    initialReport: passedReport,
+    persistFinalError: new Error("terminal persistence unavailable"),
+  });
+
+  await assert.rejects(
+    () => subject.activation.activate(subject.input),
+    /terminal persistence unavailable/,
+  );
+
+  assert.deepEqual(subject.sandbox.restoreCalls, [["src/App.tsx"]]);
+  assert.equal(subject.repository.persistenceAttempts, 1);
+  assert.deepEqual(subject.repository.persisted, []);
+});
+
 test("missing clone or inspiration reference evidence fails without calling repair", async () => {
   for (const mode of ["clone", "inspiration"] as const) {
     const subject = fixture({ mode, reference: undefined });
@@ -185,6 +209,7 @@ test("production validation refuses clone and inspiration fidelity checks withou
       runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
     },
     captureOutput: async () => ({ output: "captured" }),
+    readPng: async () => Buffer.alloc(0),
     validateBrowser: async () => ({
       runtime: { passed: true, evidence: "runtime passed" },
       responsive: [],
@@ -212,4 +237,92 @@ test("production validation refuses clone and inspiration fidelity checks withou
         && error.message === "Reference evidence unavailable for live fidelity validation.",
     );
   }
+});
+
+test("production clone validation reports missing reference evidence as capture-policy through the runner", async () => {
+  const dependencies = createProductionValidationDependencies({
+    sandbox: {
+      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
+    },
+    captureOutput: async () => ({ output: "captured" }),
+    readPng: async () => Buffer.alloc(0),
+    validateBrowser: async () => ({
+      runtime: { passed: true, evidence: "runtime passed" },
+      responsive: [320, 375, 414, 768, 1440].map((width) => ({
+        width,
+        horizontalOverflow: false,
+        passed: true,
+        evidence: `${width}px passed`,
+      })),
+      keyboard: { passed: true, evidence: "keyboard passed" },
+      reducedMotion: { passed: true, evidence: "motion passed" },
+      accessibility: { passed: true, evidence: "accessibility passed" },
+      passed: true,
+    }),
+  });
+
+  const report = await runValidation({
+    artifact,
+    brief: { contentFacts: [], allowedPlaceholders: [] },
+    plan: { primaryCta: null, declaredPackages: [] },
+    mode: "clone",
+    sandboxId: "sandbox-1",
+    sandboxUrl: "https://sandbox.example.test",
+    desktopWidth: 1440,
+  }, dependencies);
+
+  assert.equal(report.finalStatus, "failed");
+  assert.equal(report.repairEligibility?.eligible, false);
+  assert.equal(report.repairEligibility?.failureClass, "capture-policy");
+});
+
+test("production validation rejects raw clone buffers and bare inspiration checks without durable provenance", async () => {
+  const dependencies = createProductionValidationDependencies({
+    sandbox: {
+      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
+    },
+    captureOutput: async () => ({ output: "captured" }),
+    readPng: async () => Buffer.alloc(0),
+    validateBrowser: async () => ({
+      runtime: { passed: true, evidence: "runtime passed" },
+      responsive: [],
+      keyboard: { passed: true, evidence: "keyboard passed" },
+      reducedMotion: { passed: true, evidence: "motion passed" },
+      accessibility: { passed: true, evidence: "accessibility passed" },
+      passed: true,
+    }),
+  });
+  const { source, output } = createVisualFixtures();
+  const common = {
+    artifact,
+    brief: { contentFacts: [], allowedPlaceholders: [] },
+    plan: { primaryCta: null, declaredPackages: [] },
+    sandboxId: "sandbox-1",
+    sandboxUrl: "https://sandbox.example.test",
+    desktopWidth: 1440,
+  };
+
+  await assert.rejects(
+    () => dependencies.evaluateVisual({
+      ...common,
+      mode: "clone",
+      reference: { source } as unknown as ValidationRunInput["reference"],
+      capture: { output },
+    }),
+    (error: unknown) => error instanceof ValidationStepError
+      && error.failureClass === "capture-policy",
+  );
+
+  await assert.rejects(
+    () => dependencies.evaluateVisual({
+      ...common,
+      mode: "inspiration",
+      reference: {
+        brandLanguage: { passed: true, evidence: "A bare result is not a durable bundle." },
+      } as unknown as ValidationRunInput["reference"],
+      capture: { output: "captured" },
+    }),
+    (error: unknown) => error instanceof ValidationStepError
+      && error.failureClass === "capture-policy",
+  );
 });

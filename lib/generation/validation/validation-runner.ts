@@ -20,6 +20,7 @@ import {
 import type { SandboxBuildResult } from "./build-validator";
 import type { BrowserValidationReport } from "./browser-validator";
 import type { DependencyValidationResult } from "./dependency-validator";
+import type { CapturedVisualEvidenceBundle } from "./visual-evaluator";
 
 const REPAIRABLE_FAILURE_CLASSES = new Set<ValidationFailureClass>([
   "static-rule",
@@ -43,9 +44,33 @@ const CLONE_VISUAL_AXES = [
 const MINIMUM_CLONE_VISUAL_SCORE = 0.8;
 const REQUIRED_MOBILE_VIEWPORT_WIDTHS = [320, 375, 414, 768] as const;
 
+/**
+ * Reference evidence retained after source capture. The image bytes themselves
+ * remain in the artifact store; the validator receives only durable keys plus
+ * their paired desktop/mobile layout evidence.
+ */
+export interface DurableCloneReferenceEvidence extends CapturedVisualEvidenceBundle {
+  kind: "clone-reference-v1";
+  captureId: string;
+  sourceUrl: string;
+  capturedAt: string;
+}
+
+/**
+ * A persisted brand extraction, not an evaluator result constructed at call
+ * time. `artifactKey` identifies the stored extraction used to derive it.
+ */
+export interface DurableBrandLanguageBundle {
+  kind: "brand-language-v1";
+  artifactKey: string;
+  sourceUrl: string;
+  capturedAt: string;
+  evaluation: CheckResult;
+}
+
 export interface ReferenceBundle {
-  source?: unknown;
-  brandLanguage?: unknown;
+  source?: DurableCloneReferenceEvidence;
+  brandLanguage?: DurableBrandLanguageBundle;
 }
 
 export interface ValidationCapture {
@@ -311,11 +336,6 @@ async function runModeVisualValidation(
   report: ValidationReport,
   failures: ValidationStepError[],
 ): Promise<void> {
-  if (input.mode === "clone" && !input.reference) {
-    addFailure(failures, "user-input", "Clone validation requires a reference bundle.");
-    return;
-  }
-
   try {
     const visualResult = await dependencies.evaluateVisual({ ...input, capture });
     if (visualResult.mode !== input.mode) {
