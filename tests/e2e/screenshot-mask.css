@@ -1,0 +1,9 @@
+/* Limit masks to values that are intentionally nondeterministic in product captures. */
+[data-screenshot-dynamic="timestamp"],
+[data-screenshot-dynamic="random-id"],
+[data-screenshot-dynamic="sandbox-url"] {
+  color: transparent !important;
+  text-shadow: none !important;
+  background-color: rgb(229 231 235) !important;
+  border-color: rgb(209 213 219) !important;
+}
