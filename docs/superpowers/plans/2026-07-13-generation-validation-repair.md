@@ -117,7 +117,7 @@ git commit -m "feat: add deterministic static quality rules"
 - Consumes: artifact packages/files and `SandboxService`.
 - Produces: `validateDependencies`, `validateSandboxBuild`, and typed compile results.
 
-- [ ] **Step 1: Write package and compile tests**
+- [x] **Step 1: Write package and compile tests**
 
 ```ts
 test("dependency validation rejects commands and URLs", () => {
@@ -134,7 +134,7 @@ test("build validation preserves exact stderr evidence", async () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -144,7 +144,7 @@ npx tsx --test tests/validation/dependency-validator.test.ts tests/integration/b
 
 Expected: FAIL because validators do not exist.
 
-- [ ] **Step 3: Implement dependency and build gates**
+- [x] **Step 3: Implement dependency and build gates**
 
 Allow only npm registry package names matching:
 
@@ -156,7 +156,7 @@ Compare bare imports extracted with the TypeScript compiler to declared packages
 
 Do not restart or overwrite the last working version when build fails.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run:
 
@@ -166,7 +166,7 @@ npx tsx --test tests/validation/dependency-validator.test.ts tests/integration/b
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/generation/validation/dependency-validator.ts lib/generation/validation/build-validator.ts lib/generation/artifact/artifact-applier.ts tests/validation/dependency-validator.test.ts tests/integration/build-validator.test.ts
