@@ -24,6 +24,31 @@ export interface VisualEvidenceBundle {
   mobileLayout: LayoutEvidence;
 }
 
+/**
+ * Minimal durable-image projection of the architecture's CapturedImage.
+ * Artifact bytes remain outside this contract and are resolved only through
+ * the injected reader below.
+ */
+export interface CapturedImageReference {
+  artifactKey: string;
+  mediaType: "image/png";
+  width: number;
+  height: number;
+  devicePixelRatio: number;
+  masks?: ScreenshotEvidence["masks"];
+}
+
+export interface CapturedVisualEvidenceBundle {
+  desktopScreenshot: CapturedImageReference;
+  mobileScreenshot: CapturedImageReference;
+  desktopLayout: LayoutEvidence;
+  mobileLayout: LayoutEvidence;
+}
+
+export interface CapturedImageReader {
+  readPng(image: CapturedImageReference): Promise<Buffer>;
+}
+
 export interface VisualFidelityInput {
   source: VisualEvidenceBundle;
   output: VisualEvidenceBundle;
@@ -65,6 +90,27 @@ export function evaluateVisualFidelity({ source, output }: VisualFidelityInput):
   };
 }
 
+/**
+ * Resolves durable PNG artifacts at the edge of visual validation without
+ * coupling the evaluator to a database, artifact store, or capture provider.
+ */
+export async function adaptCapturedVisualEvidence(
+  input: CapturedVisualEvidenceBundle,
+  reader: CapturedImageReader,
+): Promise<VisualEvidenceBundle> {
+  const [desktopPng, mobilePng] = await Promise.all([
+    reader.readPng(input.desktopScreenshot),
+    reader.readPng(input.mobileScreenshot),
+  ]);
+
+  return {
+    desktopScreenshot: screenshotEvidenceFromCapture(input.desktopScreenshot, desktopPng),
+    mobileScreenshot: screenshotEvidenceFromCapture(input.mobileScreenshot, mobilePng),
+    desktopLayout: input.desktopLayout,
+    mobileLayout: input.mobileLayout,
+  };
+}
+
 function evaluateViewport(
   sourceLayout: LayoutEvidence,
   outputLayout: LayoutEvidence,
@@ -78,6 +124,18 @@ function evaluateViewport(
 
 function averageAxis(first: number, second: number): number {
   return (first + second) / 2;
+}
+
+function screenshotEvidenceFromCapture(captured: CapturedImageReference, png: Buffer): ScreenshotEvidence {
+  return {
+    png,
+    viewport: {
+      width: captured.width,
+      height: captured.height,
+      devicePixelRatio: captured.devicePixelRatio,
+    },
+    masks: captured.masks,
+  };
 }
 
 export { VisualComparisonError };

@@ -90,6 +90,9 @@ export function createVisualFixtures(): { source: VisualFixtureBundle; output: V
     ],
     responsive: [
       { width: 320, horizontalOverflow: false, landmarkOrder: ["header", "hero", "action"], columns: 1 },
+      { width: 375, horizontalOverflow: false, landmarkOrder: ["header", "hero", "action"], columns: 1 },
+      { width: 414, horizontalOverflow: false, landmarkOrder: ["header", "hero", "action"], columns: 1 },
+      { width: 768, horizontalOverflow: false, landmarkOrder: ["header", "hero", "action"], columns: 2 },
       { width: 1440, horizontalOverflow: false, landmarkOrder: ["header", "hero", "action"], columns: 2 },
     ],
   });

@@ -63,9 +63,14 @@ export interface LayoutComparison {
   responsive: number;
 }
 
+const REQUIRED_MOBILE_RESPONSIVE_WIDTHS = [320, 375, 414, 768] as const;
+const MINIMUM_DESKTOP_RESPONSIVE_WIDTH = 1024;
+
 export function compareLayouts(source: LayoutEvidence, output: LayoutEvidence): LayoutComparison {
   assertLayoutViewport(source.viewport, "source");
   assertLayoutViewport(output.viewport, "output");
+  assertCompleteResponsiveEvidence(source.responsive, "source");
+  assertCompleteResponsiveEvidence(output.responsive, "output");
 
   return {
     structure: compareStructure(source, output),
@@ -155,8 +160,6 @@ function compareSpacing(source: LayoutEvidence, output: LayoutEvidence): number 
 }
 
 function compareResponsive(source: ResponsiveEvidence[], output: ResponsiveEvidence[]): number {
-  if (source.length === 0) return output.length === 0 ? 1 : 0;
-
   const outputByWidth = new Map(output.map((item) => [item.width, item]));
   const total = source.reduce((sum, item) => {
     const candidate = outputByWidth.get(item.width);
@@ -167,7 +170,32 @@ function compareResponsive(source: ResponsiveEvidence[], output: ResponsiveEvide
     return sum + (overflowScore + orderScore + columnScore) / 3;
   }, 0);
 
-  return clampScore((total / source.length) ** 2);
+  return clampScore((total / source.length) ** REQUIRED_MOBILE_RESPONSIVE_WIDTHS.length);
+}
+
+function assertCompleteResponsiveEvidence(evidence: ResponsiveEvidence[], label: string): void {
+  const widths = new Set<number>();
+  for (const item of evidence) {
+    if (widths.has(item.width)) {
+      throw new TypeError(`${label} responsive evidence has Duplicate responsive width ${item.width}px.`);
+    }
+    widths.add(item.width);
+  }
+
+  for (const requiredWidth of REQUIRED_MOBILE_RESPONSIVE_WIDTHS) {
+    if (!widths.has(requiredWidth)) {
+      throw new TypeError(`${label} responsive evidence is Missing required responsive width ${requiredWidth}px.`);
+    }
+  }
+
+  const nonMobileWidths = evidence.map((item) => item.width).filter((width) => !REQUIRED_MOBILE_RESPONSIVE_WIDTHS.includes(width as typeof REQUIRED_MOBILE_RESPONSIVE_WIDTHS[number]));
+  const invalidDesktopWidth = nonMobileWidths.find((width) => !Number.isFinite(width) || width < MINIMUM_DESKTOP_RESPONSIVE_WIDTH);
+  if (invalidDesktopWidth !== undefined) {
+    throw new TypeError(`${label} Desktop responsive width must be at least 1024px; received ${invalidDesktopWidth}px.`);
+  }
+  if (nonMobileWidths.length !== 1) {
+    throw new TypeError(`${label} responsive evidence must include exactly one desktop width of at least 1024px.`);
+  }
 }
 
 function normalizedBoundingBoxScore(source: BoundingBox, sourceViewport: LayoutEvidence["viewport"], output: BoundingBox, outputViewport: LayoutEvidence["viewport"]): number {

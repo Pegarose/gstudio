@@ -7,6 +7,7 @@ import {
   VisualComparisonError,
   evaluateVisualFidelity,
 } from "../../lib/generation/validation/visual-evaluator";
+import * as visualEvaluator from "../../lib/generation/validation/visual-evaluator";
 import { createVisualFixtures, replacePixel, solidPng } from "../fixtures/visual/visual-fixtures";
 
 test("visual evaluation compares canonical desktop and mobile captures and returns separate diff artifacts", () => {
@@ -109,6 +110,47 @@ test("responsive evidence records breakpoint regressions separately", () => {
   assert.equal(result.screenshot, 1);
 });
 
+test("both source and output reject each missing required mobile responsive width", () => {
+  for (const side of ["source", "output"] as const) {
+    for (const missingWidth of [375, 414, 768]) {
+      const { source, output } = createVisualFixtures();
+      for (const layout of side === "source"
+        ? [source.desktopLayout, source.mobileLayout]
+        : [output.desktopLayout, output.mobileLayout]) {
+        layout.responsive = layout.responsive.filter((item) => item.width !== missingWidth);
+      }
+
+      assert.throws(
+        () => evaluateVisualFidelity({ source, output }),
+        /Missing required responsive width/,
+      );
+    }
+  }
+});
+
+test("duplicate responsive width evidence is rejected instead of being scored as a complete set", () => {
+  const { source, output } = createVisualFixtures();
+  source.desktopLayout.responsive.push({ ...source.desktopLayout.responsive[0] });
+
+  assert.throws(
+    () => evaluateVisualFidelity({ source, output }),
+    /Duplicate responsive width/,
+  );
+});
+
+test("desktop responsive evidence must be one width of at least 1024 pixels", () => {
+  const { source, output } = createVisualFixtures();
+  source.mobileLayout.responsive[4] = {
+    ...source.mobileLayout.responsive[4],
+    width: 1023,
+  };
+
+  assert.throws(
+    () => evaluateVisualFidelity({ source, output }),
+    /Desktop responsive width must be at least 1024px/,
+  );
+});
+
 test("a declared dynamic mask removes only the masked screenshot difference", () => {
   const { source, output } = createVisualFixtures();
   output.desktopScreenshot.png = replacePixel(output.desktopScreenshot.png, 0, 0, [255, 0, 0, 255]);
@@ -156,4 +198,39 @@ test("different mobile screenshot aspect ratios are rejected instead of stretche
     () => evaluateVisualFidelity({ source, output }),
     (error: unknown) => error instanceof VisualComparisonError && error.code === "aspect-ratio-mismatch",
   );
+});
+
+test("a pure adapter reads canonical captured images through an injected PNG reader", async () => {
+  const { source, output } = createVisualFixtures();
+  const pngByArtifactKey = new Map([
+    ["source-desktop", source.desktopScreenshot.png],
+    ["source-mobile", source.mobileScreenshot.png],
+    ["output-desktop", output.desktopScreenshot.png],
+    ["output-mobile", output.mobileScreenshot.png],
+  ]);
+  const adaptCapturedVisualEvidence = (visualEvaluator as typeof visualEvaluator & {
+    adaptCapturedVisualEvidence: (input: unknown, reader: {
+      readPng(image: { artifactKey: string }): Promise<Buffer>;
+    }) => Promise<{
+      desktopScreenshot: { png: Buffer };
+      mobileScreenshot: { png: Buffer };
+    }>;
+  }).adaptCapturedVisualEvidence;
+  const reader = {
+    async readPng(image: { artifactKey: string }): Promise<Buffer> {
+      const png = pngByArtifactKey.get(image.artifactKey);
+      assert.ok(png, `missing PNG fixture for ${image.artifactKey}`);
+      return Buffer.from(png);
+    },
+  };
+
+  const adapted = await adaptCapturedVisualEvidence({
+    desktopScreenshot: { artifactKey: "source-desktop", mediaType: "image/png", ...source.desktopScreenshot.viewport },
+    mobileScreenshot: { artifactKey: "source-mobile", mediaType: "image/png", ...source.mobileScreenshot.viewport },
+    desktopLayout: source.desktopLayout,
+    mobileLayout: source.mobileLayout,
+  }, reader);
+
+  assert.deepEqual(adapted.desktopScreenshot.png, source.desktopScreenshot.png);
+  assert.deepEqual(adapted.mobileScreenshot.png, source.mobileScreenshot.png);
 });
