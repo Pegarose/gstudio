@@ -51,6 +51,10 @@ export abstract class SandboxProvider {
   abstract getSandboxInfo(): SandboxInfo | null;
   abstract terminate(): Promise<void>;
   abstract isAlive(): boolean;
+
+  async pause(): Promise<void> {
+    throw new Error('pause not implemented for this provider');
+  }
   
   // Optional methods that providers can override
   async setupViteApp(): Promise<void> {
