@@ -142,6 +142,15 @@ export class E2BProvider extends SandboxProvider {
           content = f.read()
       print(content)
     `);
+
+    if (result.error) {
+      const errorName = result.error.name || 'ExecutionError';
+      const errorValue = result.error.value || 'Unknown sandbox execution error';
+      if (errorName === 'FileNotFoundError') {
+        throw Object.assign(new Error(`ENOENT: ${errorName}: ${errorValue}`), { code: 'ENOENT' });
+      }
+      throw new Error(`Failed to read file: ${errorName}: ${errorValue}`);
+    }
     
     return result.logs.stdout.join('\n');
   }

@@ -48,6 +48,17 @@ function isAbsentFileError(error: unknown): boolean {
   return error instanceof Error && ABSENT_FILE_ERROR.test(error.message);
 }
 
+function normalizeSnapshotPaths(paths: string[]): string[] {
+  return paths.map(normalizeSnapshotPath);
+}
+
+function normalizeSnapshots(snapshots: SandboxFileSnapshot[]): SandboxFileSnapshot[] {
+  return snapshots.map((snapshot) => ({
+    ...snapshot,
+    path: normalizeSnapshotPath(snapshot.path),
+  }));
+}
+
 export function createSandboxService(
   dependencies: CreateSandboxServiceDependencies = {},
 ): SandboxService {
@@ -105,11 +116,11 @@ export function createSandboxService(
     },
 
     async snapshotFiles(sandboxId, paths) {
+      const normalizedPaths = normalizeSnapshotPaths(paths);
       const provider = await resolve(sandboxId);
       const snapshots: SandboxFileSnapshot[] = [];
 
-      for (const path of paths) {
-        const normalizedPath = normalizeSnapshotPath(path);
+      for (const normalizedPath of normalizedPaths) {
         try {
           snapshots.push({ path: normalizedPath, content: await provider.readFile(normalizedPath) });
         } catch (error) {
@@ -124,10 +135,11 @@ export function createSandboxService(
     },
 
     async restoreFiles(sandboxId, snapshots) {
+      const normalizedSnapshots = normalizeSnapshots(snapshots);
       const provider = await resolve(sandboxId);
 
-      for (const snapshot of snapshots) {
-        const normalizedPath = normalizeSnapshotPath(snapshot.path);
+      for (const snapshot of normalizedSnapshots) {
+        const normalizedPath = snapshot.path;
         if (snapshot.content !== null) {
           await provider.writeFile(normalizedPath, snapshot.content);
           continue;

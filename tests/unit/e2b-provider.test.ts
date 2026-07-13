@@ -30,6 +30,26 @@ test('reconnect stores the durable E2B sandbox and refreshes sandbox info', asyn
   }
 });
 
+test('readFile throws an ENOENT error for a structured E2B FileNotFoundError', async () => {
+  const provider = new E2BProvider({ e2b: { apiKey: 'test-key' } });
+  Object.assign(provider as unknown as Record<string, unknown>, {
+    sandbox: {
+      runCode: async () => ({
+        logs: { stdout: [], stderr: [] },
+        error: {
+          name: 'FileNotFoundError',
+          value: '[Errno 2] No such file or directory',
+        },
+      }),
+    },
+  });
+
+  await assert.rejects(
+    () => provider.readFile('src/Missing.tsx'),
+    /ENOENT.*FileNotFoundError/i,
+  );
+});
+
 test('setupViteApp starts a managed Vite process without broad pkill', async () => {
   const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
   const backgroundHandle = { kill: async () => undefined };
