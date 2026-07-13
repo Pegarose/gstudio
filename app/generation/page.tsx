@@ -2259,10 +2259,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              let data: any;
               try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'status') {
+                data = JSON.parse(line.slice(6));
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
+                continue;
+              }
+
+              if (data.type === 'error') {
+                throw new Error(data.error || data.message || 'Generation provider failed');
+              }
+
+              if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
                 } else if (data.type === 'thinking') {
                   setGenerationProgress(prev => ({ 
@@ -2471,11 +2480,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     // Keep the files that were already parsed during streaming
                     files: prev.files.length > 0 ? prev.files : parsedFiles
                   }));
-                } else if (data.type === 'error') {
-                  throw new Error(data.error);
-                }
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
               }
             }
           }

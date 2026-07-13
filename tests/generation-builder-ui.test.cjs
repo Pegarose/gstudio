@@ -79,6 +79,17 @@ test('builder reports a passed generation quality gate', () => {
   assert.match(source, /repairCount/);
 });
 
+test('chat generation stream propagates terminal SSE errors after parsing', () => {
+  const chatStreamStart = source.indexOf("const response = await fetch('/api/generate-ai-code-stream'");
+  const chatStreamEnd = source.indexOf('if (generatedCode) {', chatStreamStart);
+  const chatStream = source.slice(chatStreamStart, chatStreamEnd);
+
+  assert.match(
+    chatStream,
+    /let data: any;\s*try \{\s*data = JSON\.parse\(line\.slice\(6\)\);\s*\} catch \(e\) \{\s*console\.error\('Failed to parse SSE data:', e\);\s*continue;\s*\}\s*if \(data\.type === 'error'\) \{\s*throw new Error\(data\.error \|\| data\.message/,
+  );
+});
+
 test('auto-start waits for the explicit sandbox and carries its ID through apply', () => {
   const source = readFileSync(builderPage, 'utf8');
 
