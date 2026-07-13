@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { assembleSystemContext } from "../../lib/generation/context/prompt-assembler";
 
+function section(system: string, name: string): string {
+  const match = system.match(new RegExp(`<${name}>\\n([\\s\\S]*?)\\n<\\/${name}>`));
+  assert.ok(match, `expected <${name}> section`);
+  return match[1];
+}
+
 test("clone context loads clone-fidelity from the canonical directory", () => {
   const result = assembleSystemContext({
     mode: "clone",
@@ -53,4 +59,33 @@ test("edit context reuses its recorded base mode and includes structured project
   assert.match(result.system, /<design-plan>\n{"macrostructure":"Long Document"}\n<\/design-plan>/);
   assert.match(result.fingerprint, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(result.system, /gstudio-agent-context|sourceRoot/);
+});
+
+test("redacts secret environment keys and values before project facts reach the model", () => {
+  process.env.PROMPT_ASSEMBLER_TEST_SECRET = "test-secret-value";
+  const result = assembleSystemContext({
+    mode: "scratch",
+    prompt: "Build a legal-tech site",
+    projectFacts: [{
+      OPENAI_API_KEY: "sk-live-1234567890",
+      name: "PROMPT_ASSEMBLER_TEST_SECRET",
+      value: "test-secret-value",
+    }],
+    designPlan: null,
+  });
+
+  assert.doesNotMatch(section(result.system, "project-facts"), /OPENAI_API_KEY|PROMPT_ASSEMBLER_TEST_SECRET|sk-live-1234567890|test-secret-value/);
+  delete process.env.PROMPT_ASSEMBLER_TEST_SECRET;
+});
+
+test("redacts Windows and POSIX filesystem paths before named sections reach the model", () => {
+  const result = assembleSystemContext({
+    mode: "scratch",
+    prompt: "Build a legal-tech site",
+    projectFacts: [{ cache: "C:\\Users\\BCX\\.env.local", workspace: "/home/agent/GStudio" }],
+    designPlan: { source: "/var/tmp/design-plan.json" },
+  });
+
+  assert.doesNotMatch(section(result.system, "project-facts"), /C:\\Users\\BCX\\.env\.local|\/home\/agent\/GStudio/);
+  assert.doesNotMatch(section(result.system, "design-plan"), /\/var\/tmp\/design-plan\.json/);
 });
