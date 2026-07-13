@@ -59,18 +59,6 @@ const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
     : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
 }) : null;
 
-const clineClient = process.env.CLINE_API_KEY ? createOpenAI({
-  apiKey: process.env.CLINE_API_KEY,
-  baseURL: 'https://api.cline.bot/api/v1',
-}) : null;
-
-const agentRouterClient = process.env.AGENTROUTER_API_KEY ? createOpenAI({
-  apiKey: process.env.AGENTROUTER_API_KEY,
-  baseURL: process.env.AGENTROUTER_API_BASE?.endsWith('/v1') || process.env.AGENTROUTER_API_BASE?.endsWith('/v1/')
-    ? process.env.AGENTROUTER_API_BASE
-    : `${process.env.AGENTROUTER_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
 // Helper function to analyze user preferences from conversation history
 function analyzeUserPreferences(messages: ConversationMessage[]): {
   commonPatterns: string[];
@@ -121,6 +109,15 @@ interface CustomRouteInfo {
   provider: 'opencode' | 'tr4' | 'agentrouter';
 }
 
+const tr4SharedModels = new Set([
+  'kimi-k2.5',
+  'kimi-k2-thinking',
+  'kimi-k2.7-code',
+  'kimi-k2',
+  'kimi-k2.6',
+]);
+const tr4FallbackModel = 'gpt-5.6-sol';
+
 function getModelProvider(model: string): CustomRouteInfo | null {
   const m = model.toLowerCase();
   
@@ -143,9 +140,8 @@ function getModelProvider(model: string): CustomRouteInfo | null {
     return { client: opencodeClient, name: model, provider: 'opencode' };
   }
 
-  // Fallbacks
-  if (process.env.AGENTROUTER_API_KEY && agentRouterClient) {
-    return { client: agentRouterClient, name: model, provider: 'agentrouter' };
+  if (tr4SharedModels.has(m) && process.env.TR4_API_KEY && tr4Client) {
+    return { client: tr4Client, name: tr4FallbackModel, provider: 'tr4' };
   }
 
   return null;
@@ -1282,6 +1278,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         let modelProvider: any;
         let actualModel: string = '';
         let isUsingCustomRoute = false;
+        let activeStreamProvider = 'groq';
 
         const isAnthropic = model.startsWith('anthropic/');
         const isGoogle = model.startsWith('google/');
@@ -1293,6 +1290,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           isUsingCustomRoute = true;
           modelProvider = customRoute.client;
           actualModel = customRoute.name;
+          activeStreamProvider = customRoute.provider;
           console.log(`[generate-ai-code-stream] Intercepting request: Using ${customRoute.provider.toUpperCase()} provider with model: ${actualModel}`);
         }
 
@@ -1301,6 +1299,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                                 (isOpenAI ? openai : 
                                 (isGoogle ? googleGenerativeAI : 
                                 (isKimiGroq ? groq : groq)));
+          activeStreamProvider = isAnthropic ? 'anthropic' : isGoogle ? 'google' : isOpenAI ? 'openai' : 'groq';
           
           if (isAnthropic) {
             actualModel = model.replace('anthropic/', '');
@@ -1413,7 +1412,7 @@ It's better to have 3 complete files than 10 incomplete files.`
         let result;
         let retryCount = 0;
         const maxRetries = 2;
-        const providerTimeoutMs = Number(process.env.AI_STREAM_TIMEOUT_MS || 60000);
+        const providerTimeoutMs = Number(process.env.AI_STREAM_TIMEOUT_MS || 180000);
         
         let generatedCode = '';
         let explanation = '';
@@ -1434,28 +1433,40 @@ It's better to have 3 complete files than 10 incomplete files.`
             let isInTag = false;
             let conversationalBuffer = '';
             let tagBuffer = '';
-            const attemptSignal = AbortSignal.timeout(providerTimeoutMs);
-            streamOptions.abortSignal = attemptSignal;
-            
-            result = await streamText(streamOptions);
-            
-            // Stream the response and parse for packages in real-time
-            for await (const textPart of result?.textStream || []) {
-              const text = textPart || '';
-              generatedCode += text;
-              currentFile += text;
+            const attemptController = new AbortController();
+            let streamTimedOut = false;
+            let streamInactivityTimeout: ReturnType<typeof setTimeout> | null = null;
+            const refreshStreamInactivityTimeout = () => {
+              if (streamInactivityTimeout) clearTimeout(streamInactivityTimeout);
+              streamInactivityTimeout = setTimeout(() => {
+                streamTimedOut = true;
+                attemptController.abort();
+              }, providerTimeoutMs);
+            };
+            refreshStreamInactivityTimeout();
+            streamOptions.abortSignal = attemptController.signal;
+
+            try {
+              result = await streamText(streamOptions);
+
+              // Stream the response and parse for packages in real-time
+              for await (const textPart of result?.textStream || []) {
+                refreshStreamInactivityTimeout();
+                const text = textPart || '';
+                generatedCode += text;
+                currentFile += text;
               
-              // Combine with buffer for tag detection
-              const searchText = tagBuffer + text;
+                // Combine with buffer for tag detection
+                const searchText = tagBuffer + text;
               
-              // Log streaming chunks to console
-              process.stdout.write(text);
+                // Log streaming chunks to console
+                process.stdout.write(text);
               
-              // Check if we're entering or leaving a tag
-              const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-              const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
+                // Check if we're entering or leaving a tag
+                const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
+                const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
               
-              if (hasOpenTag) {
+                if (hasOpenTag) {
                 // Send any buffered conversational text before the tag
                 if (conversationalBuffer.trim() && !isInTag) {
                   await sendProgress({ 
@@ -1465,32 +1476,32 @@ It's better to have 3 complete files than 10 incomplete files.`
                   conversationalBuffer = '';
                 }
                 isInTag = true;
-              }
+                }
               
-              if (hasCloseTag) {
-                isInTag = false;
-              }
+                if (hasCloseTag) {
+                  isInTag = false;
+                }
               
               // If we're not in a tag, buffer as conversational text
-              if (!isInTag && !hasOpenTag) {
-                conversationalBuffer += text;
-              }
-              
+                if (!isInTag && !hasOpenTag) {
+                  conversationalBuffer += text;
+                }
+
               // Stream the raw text for live preview
-              await sendProgress({ 
-                type: 'stream', 
-                text: text,
-                raw: true 
-              });
-              
+                await sendProgress({
+                  type: 'stream',
+                  text: text,
+                  raw: true
+                });
+
               // Debug: Log every 100 characters streamed
-              if (generatedCode.length % 100 < text.length) {
-                console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-              }
+                if (generatedCode.length % 100 < text.length) {
+                  console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
+                }
               
               // Check for package tags in buffered text (ONLY for edits, not initial generation)
-              let lastIndex = 0;
-              if (isEdit) {
+                let lastIndex = 0;
+                if (isEdit) {
                 const packageRegex = /<package>([^<]+)<\/package>/g;
                 let packageMatch;
                 
@@ -1507,23 +1518,23 @@ It's better to have 3 complete files than 10 incomplete files.`
                   }
                   lastIndex = packageMatch.index + packageMatch[0].length;
                 }
-              }
+                }
               
               // Keep unmatched portion in buffer for next iteration
-              tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+                tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
               
               // Check for file boundaries
-              if (text.includes('<file path="')) {
+                if (text.includes('<file path="')) {
                 const pathMatch = text.match(/<file path="([^"]+)"/);
                 if (pathMatch) {
                   currentFilePath = pathMatch[1];
                   isInFile = true;
                   currentFile = text;
                 }
-              }
+                }
               
               // Check for file end
-              if (isInFile && currentFile.includes('</file>')) {
+                if (isInFile && currentFile.includes('</file>')) {
                 isInFile = false;
                 
                 // Send component progress update
@@ -1546,11 +1557,19 @@ It's better to have 3 complete files than 10 incomplete files.`
                 
                 currentFile = '';
                 currentFilePath = '';
+                }
               }
+            } catch (streamError) {
+              if (streamTimedOut) {
+                throw new Error(`Provider stream inactivity timeout after ${providerTimeoutMs}ms`);
+              }
+              throw streamError;
+            } finally {
+              if (streamInactivityTimeout) clearTimeout(streamInactivityTimeout);
             }
 
-            if (attemptSignal.aborted) {
-              throw new Error(`Provider stream timeout after ${providerTimeoutMs}ms`);
+            if (streamTimedOut) {
+              throw new Error(`Provider stream inactivity timeout after ${providerTimeoutMs}ms`);
             }
             if (!generatedCode.trim()) {
               throw new Error('Provider returned an empty stream');
@@ -1661,23 +1680,21 @@ It's better to have 3 complete files than 10 incomplete files.`
           } catch (streamError: any) {
             console.error(`[generate-ai-code-stream] Error calling streamText/streaming (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
             
-            // Fallback from Opencode to Cline
-            if (isUsingCustomRoute && customRoute?.provider === 'opencode' && process.env.CLINE_API_KEY && clineClient) {
-              const clineModelName = `cline-pass/${customRoute.name}`;
-              const clineModel = clineClient.chat ? clineClient.chat(clineModelName) : clineClient(clineModelName);
-              
-              if (streamOptions.model !== clineModel) {
-                console.log(`[generate-ai-code-stream] Opencode failed. Switching to fallback provider: Cline with model: ${clineModelName}`);
-                await sendProgress({ 
-                  type: 'info', 
-                  message: 'Opencode failed, falling back to Cline API...' 
-                });
-                
-                streamOptions.model = clineModel;
-                actualModel = clineModelName;
-                retryCount = 0; // Reset retry count for the new provider
-                continue; // Retry with the new provider immediately
-              }
+            // Shared Kimi models may fall back from OpenCode to the configured TR4 API.
+            if (isUsingCustomRoute && customRoute?.provider === 'opencode' && activeStreamProvider !== 'tr4' && tr4SharedModels.has(model.toLowerCase()) && process.env.TR4_API_KEY && tr4Client) {
+              const tr4Model = tr4Client.chat ? tr4Client.chat(tr4FallbackModel) : tr4Client(tr4FallbackModel);
+
+              console.log(`[generate-ai-code-stream] Opencode failed. Switching to fallback provider: TR4 with model: ${tr4FallbackModel}`);
+              await sendProgress({
+                type: 'info',
+                message: 'Opencode failed, falling back to TR4 API...'
+              });
+
+              streamOptions.model = tr4Model;
+              actualModel = tr4FallbackModel;
+              activeStreamProvider = 'tr4';
+              retryCount = 0; // Reset retry count for the new provider
+              continue; // Retry with the new provider immediately
             }
             
             // Check if this is a Groq service unavailable error
@@ -1708,11 +1725,11 @@ It's better to have 3 complete files than 10 incomplete files.`
               }
             } else {
               // Final error, send to user
-              await sendProgress({ 
-                type: 'error', 
-                message: `Failed to initialize ${isGoogle ? 'Gemini' : isAnthropic ? 'Claude' : isOpenAI ? 'GPT-5' : isKimiGroq ? 'Kimi (Groq)' : 'Groq'} streaming: ${streamError.message}` 
+              await sendProgress({
+                type: 'error',
+                error: `${activeStreamProvider} provider failed: ${streamError.message}`
               });
-              
+
               // If this is a Google model error, provide helpful info
               if (isGoogle) {
                 await sendProgress({ 

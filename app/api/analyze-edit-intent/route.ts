@@ -40,18 +40,6 @@ const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
     : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
 }) : null;
 
-const clineClient = process.env.CLINE_API_KEY ? createOpenAI({
-  apiKey: process.env.CLINE_API_KEY,
-  baseURL: 'https://api.cline.bot/api/v1',
-}) : null;
-
-const agentRouterClient = process.env.AGENTROUTER_API_KEY ? createOpenAI({
-  apiKey: process.env.AGENTROUTER_API_KEY,
-  baseURL: process.env.AGENTROUTER_API_BASE?.endsWith('/v1') || process.env.AGENTROUTER_API_BASE?.endsWith('/v1/')
-    ? process.env.AGENTROUTER_API_BASE
-    : `${process.env.AGENTROUTER_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
 const googleGenerativeAI = createGoogleGenerativeAI({
   apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY,
   baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
@@ -91,6 +79,15 @@ interface CustomRouteInfo {
   provider: 'opencode' | 'tr4' | 'agentrouter';
 }
 
+const tr4SharedModels = new Set([
+  'kimi-k2.5',
+  'kimi-k2-thinking',
+  'kimi-k2.7-code',
+  'kimi-k2',
+  'kimi-k2.6',
+]);
+const tr4FallbackModel = 'gpt-5.6-sol';
+
 function getModelProvider(model: string): CustomRouteInfo | null {
   const m = model.toLowerCase();
   
@@ -125,7 +122,7 @@ function getModelProvider(model: string): CustomRouteInfo | null {
   }
   
   // 3. Route shared or other models (e.g., kimi-k2.5, kimi-k2-thinking, kimi-k2.7-code, kimi-k2, kimi-k2.6)
-  // Try Opencode first (with Cline fallback) if available
+  // Try Opencode first; shared Kimi models may fall back to TR4.
   if (process.env.OPENCODEGO_API_KEY && opencodeClient) {
     return { client: opencodeClient, name: model, provider: 'opencode' };
   }
@@ -133,11 +130,6 @@ function getModelProvider(model: string): CustomRouteInfo | null {
   // Try TR4 next
   if (process.env.TR4_API_KEY && tr4Client) {
     return { client: tr4Client, name: model, provider: 'tr4' };
-  }
-
-  // Fallbacks
-  if (process.env.AGENTROUTER_API_KEY && agentRouterClient) {
-    return { client: agentRouterClient, name: model, provider: 'agentrouter' };
   }
 
   return null;
@@ -262,17 +254,17 @@ Create a search plan to find the exact code that needs to be modified. Include s
     } catch (generateError: any) {
       console.error('[analyze-edit-intent] Error in generateObject:', generateError);
       
-      // Fallback from Opencode to Cline
-      if (customRoute?.provider === 'opencode' && process.env.CLINE_API_KEY && clineClient) {
-        console.log('[analyze-edit-intent] Opencode failed. Falling back to Cline API with model:', customRoute.name);
+      // Shared Kimi models may fall back from OpenCode to the configured TR4 API.
+      if (customRoute?.provider === 'opencode' && tr4SharedModels.has(model.toLowerCase()) && process.env.TR4_API_KEY && tr4Client) {
+        console.log('[analyze-edit-intent] Opencode failed. Falling back to TR4 API with model:', tr4FallbackModel);
         try {
           result = await generateObject({
-            model: clineClient.chat ? clineClient.chat(customRoute.name) : clineClient(customRoute.name),
+            model: tr4Client.chat ? tr4Client.chat(tr4FallbackModel) : tr4Client(tr4FallbackModel),
             schema: searchPlanSchema,
             messages
           });
-        } catch (clineError) {
-          console.error('[analyze-edit-intent] Cline fallback also failed:', clineError);
+        } catch (tr4Error) {
+          console.error('[analyze-edit-intent] TR4 fallback also failed:', tr4Error);
           throw generateError;
         }
       } else {

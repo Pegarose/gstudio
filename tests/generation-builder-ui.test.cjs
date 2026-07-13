@@ -45,3 +45,24 @@ test('builder workspace owns its typography instead of inheriting a serif fallba
   assert.match(source, /\.modeButton/);
   assert.match(source, /\.composerSubmit/);
 });
+
+test('builder creates a project before requesting an explicit-ID sandbox', () => {
+  const source = readFileSync(builderPage, 'utf8');
+
+  assert.match(source, /projectIdForSandbox/);
+  assert.match(source, /sessionStorage\.setItem\('projectId', String\(regData\.project\.id\)\)/);
+  assert.match(source, /createSandbox\(true, projectIdForSandbox\)/);
+  assert.match(source, /projectId: String\(projectId\)/);
+  assert.doesNotMatch(source, /body: JSON\.stringify\(\{\}\)/);
+});
+
+test('auto-start waits for the explicit sandbox and carries its ID through apply', () => {
+  const source = readFileSync(builderPage, 'utf8');
+
+  assert.match(source, /autoStart === 'true' && !showHomeScreen && homeUrlInput && sandboxData/);
+  assert.match(source, /\[showHomeScreen, homeUrlInput, sandboxData\]/);
+  assert.match(source, /Promise\.resolve\(sandboxData\)/);
+  assert.match(source, /const activeSandboxData = createdSandbox \|\| sandboxData/);
+  assert.match(source, /sandboxId: activeSandboxData\?\.sandboxId/);
+  assert.match(source, /applyGeneratedCode\(generatedCode, false, activeSandboxData\)/);
+});

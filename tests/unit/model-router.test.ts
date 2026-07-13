@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { appConfig } from "../../config/app.config";
 import { getLanguageModel, getProviderForModel } from "../../lib/ai/provider-manager";
-import { resolveModelRoute } from "../../lib/models/registry";
+import { modelRegistry, resolveModelRoute } from "../../lib/models/registry";
 import { createModelRouter } from "../../lib/models/router";
 
 test("vision planning never falls back to a text-only model", () => {
@@ -20,13 +20,28 @@ test("router throws when no route satisfies required capabilities", () => {
   assert.throws(() => router.resolve({ vision: true }));
 });
 
-test("OpenCode fallback can preserve a structured-output contract through Cline", () => {
+test("OpenCode Kimi fallback stays within the configured TR4 provider", () => {
   const router = createModelRouter([
-    { id: "opencode-code", provider: "opencode", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["cline-code"] },
-    { id: "cline-code", provider: "cline", model: "x-ai/grok-code-fast-1", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
+    { id: "opencode-code", provider: "opencode", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["tr4-code"] },
+    { id: "tr4-code", provider: "tr4", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
   ]);
 
-  assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "cline-code");
+  assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "tr4-code");
+});
+
+test("configured coder fallback never silently routes to Cline", () => {
+  const router = createModelRouter(modelRegistry);
+  const fallbacks = router.fallbacksFor("opencode-code", { structuredOutput: true });
+
+  assert.deepEqual(fallbacks.map((route) => route.id), ["tr4-code"]);
+  assert.equal(fallbacks[0].model, "gpt-5.6-sol");
+  assert.equal(fallbacks.some((route) => route.provider === "cline"), false);
+});
+
+test("configured role registry contains only the selected TR4 and OpenCode providers", () => {
+  const configuredProviders = new Set(modelRegistry.map((route) => route.provider));
+
+  assert.deepEqual(configuredProviders, new Set(["tr4", "opencode"]));
 });
 
 test("preferred incompatible routes use ordered compatible fallbacks before registry order", () => {

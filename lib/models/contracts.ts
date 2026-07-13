@@ -12,7 +12,6 @@ export type ModelProvider =
   | "google"
   | "opencode"
   | "tr4"
-  | "cline"
   | "agentrouter"
   | "vercel-gateway";
 

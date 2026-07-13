@@ -43,8 +43,6 @@ function getProviderSettings(
       return { apiKey: process.env.OPENCODEGO_API_KEY, baseURL: withV1Suffix(process.env.OPENCODEGO_API_BASE) };
     case 'tr4':
       return { apiKey: process.env.TR4_API_KEY, baseURL: withV1Suffix(process.env.TR4_API_BASE) };
-    case 'cline':
-      return { apiKey: process.env.CLINE_API_KEY, baseURL: 'https://api.cline.bot/api/v1' };
     case 'agentrouter':
       return { apiKey: process.env.AGENTROUTER_API_KEY, baseURL: withV1Suffix(process.env.AGENTROUTER_API_BASE) };
     case 'vercel-gateway':

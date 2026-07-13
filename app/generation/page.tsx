@@ -212,6 +212,7 @@ function AISandboxPage() {
       const storedQaModel = sessionStorage.getItem('selectedQaModel');
       const storedInstructions = sessionStorage.getItem('additionalInstructions');
       const storedGenerationIntent = sessionStorage.getItem('generationIntent');
+      let projectIdForSandbox = sessionStorage.getItem('projectId');
       
       if (storedUrl) {
         // Mark that we have an initial submission since we're loading with a URL
@@ -235,7 +236,7 @@ function AISandboxPage() {
         if (storedQaModel) setQaModel(storedQaModel);
 
         // Register or load project in PostgreSQL database
-        const storedProjectId = sessionStorage.getItem('projectId');
+        const storedProjectId = projectIdForSandbox;
         if (storedProjectId) {
           const pid = Number(storedProjectId);
           setActiveProjectId(pid);
@@ -252,7 +253,7 @@ function AISandboxPage() {
             .catch(err => console.error('[database] Failed to load project models:', err));
         } else {
           const projectNameStr = sessionStorage.getItem('projectName') || 'New Project';
-          fetch('/api/projects', {
+          const registrationResponse = await fetch('/api/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -263,18 +264,19 @@ function AISandboxPage() {
               coderModel: storedCoderModel || coderModel || '',
               qaModel: storedQaModel || qaModel || ''
             })
-          })
-            .then(res => res.json())
-            .then(regData => {
-              if (regData.success && regData.project) {
-                setActiveProjectId(regData.project.id);
-                console.log('[database] Project registered with ID:', regData.project.id);
-                if (regData.project.planning_model) setPlanningModel(regData.project.planning_model);
-                if (regData.project.coder_model) setCoderModel(regData.project.coder_model);
-                if (regData.project.qa_model) setQaModel(regData.project.qa_model);
-              }
-            })
-            .catch(dbErr => console.error('[database] Failed to register project:', dbErr));
+          });
+          const regData = await registrationResponse.json();
+          if (!registrationResponse.ok || !regData.success || !regData.project) {
+            throw new Error(regData.error || 'Failed to register project');
+          }
+
+          projectIdForSandbox = String(regData.project.id);
+          sessionStorage.setItem('projectId', String(regData.project.id));
+          setActiveProjectId(regData.project.id);
+          console.log('[database] Project registered with ID:', regData.project.id);
+          if (regData.project.planning_model) setPlanningModel(regData.project.planning_model);
+          if (regData.project.coder_model) setCoderModel(regData.project.coder_model);
+          if (regData.project.qa_model) setQaModel(regData.project.qa_model);
         }
         
         // Add details to context if provided
@@ -362,11 +364,11 @@ function AISandboxPage() {
           // For now, just create a new sandbox - you could enhance this to actually restore
           // the specific sandbox if your backend supports it
           sandboxCreated = true;
-          await createSandbox(true);
+          await createSandbox(true, projectIdForSandbox);
         } else {
           console.log('[home] No sandbox in URL, creating new sandbox automatically...');
           sandboxCreated = true;
-          await createSandbox(true);
+          await createSandbox(true, projectIdForSandbox);
         }
         
         // If we have a URL from the home page, mark for automatic start
@@ -488,7 +490,7 @@ function AISandboxPage() {
   // Auto-start generation if flagged
   useEffect(() => {
     const autoStart = sessionStorage.getItem('autoStart');
-    if (autoStart === 'true' && !showHomeScreen && homeUrlInput) {
+    if (autoStart === 'true' && !showHomeScreen && homeUrlInput && sandboxData) {
       sessionStorage.removeItem('autoStart');
       // Small delay to ensure everything is ready
       setTimeout(() => {
@@ -496,7 +498,7 @@ function AISandboxPage() {
         startGeneration();
       }, 1000);
     }
-  }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showHomeScreen, homeUrlInput, sandboxData]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   useEffect(() => {
@@ -743,11 +745,16 @@ function AISandboxPage() {
 
   const sandboxCreationRef = useRef<boolean>(false);
   
-  const createSandbox = async (fromHomeScreen = false) => {
+  const createSandbox = async (fromHomeScreen = false, projectIdOverride?: string | number | null) => {
     // Prevent duplicate sandbox creation
     if (sandboxCreationRef.current) {
       console.log('[createSandbox] Sandbox creation already in progress, skipping...');
       return null;
+    }
+
+    const projectId = projectIdOverride ?? activeProjectId ?? sessionStorage.getItem('projectId');
+    if (!projectId) {
+      throw new Error('A project must be registered before creating a sandbox');
     }
     
     sandboxCreationRef.current = true;
@@ -762,7 +769,11 @@ function AISandboxPage() {
       const response = await fetch('/api/create-ai-sandbox-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({
+          projectId: String(projectId),
+          generationId: null,
+          provider: 'e2b'
+        })
       });
       
       const data = await response.json();
@@ -3002,7 +3013,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //       }
 //       
 //     } catch (error: any) {
-//       addChatMessage(`Failed to clone website: ${error.message}`, 'system');
+//       addChatMessage(`Clone generation failed: ${error.message}`, 'system');
 //       setUrlStatus([]);
 //       setIsPreparingDesign(false);
 //       // Clear all states on error
@@ -3104,7 +3115,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     );
     
     // Start creating sandbox and capturing screenshot immediately in parallel
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve(null);
+    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve(sandboxData);
     
     // Set loading stage immediately before hiding home screen
     setLoadingStage('gathering');
@@ -3126,12 +3137,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       // Wait for sandbox to be ready (if it's still creating)
       const createdSandbox = await sandboxPromise;
+      const activeSandboxData = createdSandbox || sandboxData;
       
       // Now start the clone process which will stream the generation
       setUrlInput(homeUrlInput);
       setUrlOverlayVisible(false); // Make sure overlay is closed
       setUrlStatus(['Scraping website content...']);
       
+      const isFromScratch = generationIntent === 'scratch';
+      const filesBeforeGeneration = generationProgress.files;
+
       try {
         // Scrape the website
         let url = homeUrlInput.trim();
@@ -3371,8 +3386,6 @@ Focus on building something NEW, minimal, and functional that perfectly matches 
 
         } else {
           // === NORMAL CLONE MODE PROMPT OR BUILD FROM SCRATCH PROMPT ===
-          const isFromScratch = url.startsWith('scratch://');
-          
           if (!scrapeData && !isFromScratch) {
             throw new Error('Scrape data is missing');
           }
@@ -3497,7 +3510,7 @@ Focus on the key sections and content, making it clean and modern.`;
             qaModel,
             generationIntent,
             context: {
-              sandboxId: sandboxData?.sandboxId,
+              sandboxId: activeSandboxData?.sandboxId,
               structure: structureContent,
               conversationContext: conversationContext
             }
@@ -3529,10 +3542,19 @@ Focus on the key sections and content, making it clean and modern.`;
             
             for (const line of lines) {
               if (line.startsWith('data: ')) {
+                let data: any;
                 try {
-                  const data = JSON.parse(line.slice(6));
-                  
-                  if (data.type === 'status') {
+                  data = JSON.parse(line.slice(6));
+                } catch (e) {
+                  console.error('Failed to parse SSE data:', e);
+                  continue;
+                }
+
+                if (data.type === 'error') {
+                  throw new Error(data.error || data.message || 'Generation provider failed');
+                }
+
+                if (data.type === 'status') {
                     setGenerationProgress(prev => ({ ...prev, status: data.message }));
                   } else if (data.type === 'thinking') {
                     setGenerationProgress(prev => ({ 
@@ -3656,21 +3678,18 @@ Focus on the key sections and content, making it clean and modern.`;
                     
                     return updatedState;
                   });
-                } else if (data.type === 'complete') {
-                  generatedCode = data.generatedCode;
-                  explanation = data.explanation;
+                  } else if (data.type === 'complete') {
+                    generatedCode = data.generatedCode;
+                    explanation = data.explanation;
                   
                   // Save the last generated code
                   setConversationContext(prev => ({
                     ...prev,
-                    lastGeneratedCode: generatedCode
-                  }));
-                }
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
+                      lastGeneratedCode: generatedCode
+                    }));
+                  }
               }
             }
-          }
         }
       }
         
@@ -3687,7 +3706,7 @@ Focus on the key sections and content, making it clean and modern.`;
           setPromptInput(generatedCode);
 
           // Apply the code (first time is not edit mode)
-          await applyGeneratedCode(generatedCode, false);
+          await applyGeneratedCode(generatedCode, false, activeSandboxData);
 
           const successContent = isInspirationMode
             ? `Built an original application using visual direction extracted from ${cleanUrl}. You can now refine the layout, content, or interactions.`
@@ -3753,7 +3772,31 @@ Focus on the key sections and content, making it clean and modern.`;
           setActiveTab('preview');
         }, 1000); // Show completion briefly then switch
       } catch (error: any) {
-        addChatMessage(`Failed to clone website: ${error.message}`, 'system');
+        const failurePrefix = isFromScratch
+          ? 'Generation failed'
+          : isInspirationMode
+            ? 'Inspiration build failed'
+            : 'Clone generation failed';
+        const failureMessage = `${failurePrefix}: ${error.message}`;
+        setChatMessages(prev => {
+          const next = [...prev];
+          let replacedThinkingMessage = false;
+          for (let index = next.length - 1; index >= 0; index--) {
+            if (next[index].type === 'ai' && next[index].content === 'Thinking...') {
+              next[index] = {
+                ...next[index],
+                type: 'error',
+                content: failureMessage
+              };
+              replacedThinkingMessage = true;
+              break;
+            }
+          }
+          if (!replacedThinkingMessage) {
+            next.push({ content: failureMessage, type: 'error', timestamp: new Date() });
+          }
+          return next;
+        });
         setUrlStatus([]);
         setIsPreparingDesign(false);
         setIsStartingNewGeneration(false); // Clear new generation flag on error
@@ -3763,9 +3806,11 @@ Focus on the key sections and content, making it clean and modern.`;
           ...prev,
           isGenerating: false,
           isStreaming: false,
+          isThinking: false,
           status: '',
-          // Keep files to display in sidebar
-          files: prev.files
+          streamedCode: '',
+          currentFile: undefined,
+          files: filesBeforeGeneration
         }));
       }
     }, 500);

@@ -5,9 +5,13 @@ import { appConfig } from '@/config/app.config';
 import { waitForHttpReady } from '../readiness/http-readiness';
 import { viteReactTemplate } from '../templates/vite-react';
 
+type ManagedCommandHandle = {
+  kill(): Promise<unknown>;
+};
+
 export class E2BProvider extends SandboxProvider {
   private existingFiles: Set<string> = new Set();
-  private viteCommand: unknown = null;
+  private viteCommand: ManagedCommandHandle | null = null;
 
   /**
    * Attempt to reconnect to an existing E2B sandbox
@@ -456,8 +460,13 @@ if result.returncode == 0:
 else:
     print(f'⚠ Warning: npm install had issues: {result.stderr}')
     `);
+
+    // Files created through runCode are owned by root; Vite and later shell
+    // commands run as the sandbox user and need write access to the app tree.
+    await this.sandbox.commands.run('sudo chown -R user:user /home/user/app', {
+      cwd: '/home/user/app',
+    });
     
-    await this.sandbox.commands.run('pkill -f vite || true', { cwd: '/home/user/app' });
     this.viteCommand = await this.sandbox.commands.run('npm run dev', {
       cwd: '/home/user/app',
       background: true,
@@ -480,8 +489,11 @@ else:
       throw new Error('No active sandbox');
     }
 
-    
-    await this.sandbox.commands.run('pkill -f vite || true', { cwd: '/home/user/app' });
+    if (this.viteCommand) {
+      await this.viteCommand.kill();
+      this.viteCommand = null;
+    }
+
     this.viteCommand = await this.sandbox.commands.run('npm run dev', {
       cwd: '/home/user/app',
       background: true,

@@ -121,20 +121,10 @@ export const appConfig = {
       {
         id: 'intent-tr4', provider: 'tr4', model: 'gpt-5.4-mini',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 30_000, fallbacks: ['intent-agentrouter'],
-      },
-      {
-        id: 'intent-agentrouter', provider: 'agentrouter', model: 'gpt-5.4-mini',
-        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 30_000, fallbacks: [],
       },
       {
         id: 'vision-tr4', provider: 'tr4', model: 'gemini-3.1-flash-image',
-        capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 45_000, fallbacks: ['vision-google'],
-      },
-      {
-        id: 'vision-google', provider: 'google', model: 'gemini-3-pro-preview',
         capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 45_000, fallbacks: [],
       },
@@ -146,27 +136,22 @@ export const appConfig = {
       {
         id: 'design-opencode', provider: 'opencode', model: 'deepseek-v4-pro',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 45_000, fallbacks: ['cline-code'],
+        timeoutMs: 45_000, fallbacks: [],
       },
       {
         id: 'opencode-code', provider: 'opencode', model: 'kimi-k2.7-code',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 45_000, fallbacks: ['cline-code', 'agentrouter-code'],
+        timeoutMs: 45_000, fallbacks: ['tr4-code'],
       },
       {
-        id: 'cline-code', provider: 'cline', model: 'x-ai/grok-code-fast-1',
-        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 45_000, fallbacks: ['agentrouter-code'],
-      },
-      {
-        id: 'agentrouter-code', provider: 'agentrouter', model: 'gpt-5.3-codex-spark',
+        id: 'tr4-code', provider: 'tr4', model: 'gpt-5.6-sol',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 45_000, fallbacks: [],
       },
       {
         id: 'repair-opencode', provider: 'opencode', model: 'qwen3.7-max',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
-        timeoutMs: 45_000, fallbacks: ['cline-code', 'agentrouter-code'],
+        timeoutMs: 45_000, fallbacks: [],
       },
     ] satisfies readonly ModelRoute[],
 

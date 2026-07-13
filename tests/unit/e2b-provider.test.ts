@@ -30,3 +30,73 @@ test('reconnect stores the durable E2B sandbox and refreshes sandbox info', asyn
   }
 });
 
+test('setupViteApp starts a managed Vite process without broad pkill', async () => {
+  const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
+  const backgroundHandle = { kill: async () => undefined };
+  const commandCalls: Array<{ command: string; options: unknown }> = [];
+
+  Object.assign(provider as unknown as Record<string, unknown>, {
+    sandbox: {
+      runCode: async () => ({ logs: { stdout: [], stderr: [] } }),
+      commands: {
+        run: async (command: string, options: unknown) => {
+          commandCalls.push({ command, options });
+          if (command.includes('pkill')) {
+            throw new Error('broad pkill must not be used');
+          }
+          return backgroundHandle;
+        },
+      },
+    },
+    waitForViteReady: async () => undefined,
+  });
+
+  await provider.setupViteApp();
+
+  assert.deepEqual(commandCalls, [
+    {
+      command: 'sudo chown -R user:user /home/user/app',
+      options: { cwd: '/home/user/app' },
+    },
+    {
+      command: 'npm run dev',
+      options: { cwd: '/home/user/app', background: true },
+    },
+  ]);
+  assert.equal((provider as unknown as { viteCommand: unknown }).viteCommand, backgroundHandle);
+});
+
+test('restartViteServer kills the tracked process before starting its replacement', async () => {
+  const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
+  let killCount = 0;
+  const existingHandle = { kill: async () => { killCount += 1; } };
+  const replacementHandle = { kill: async () => undefined };
+  const commandCalls: Array<{ command: string; options: unknown }> = [];
+
+  Object.assign(provider as unknown as Record<string, unknown>, {
+    sandbox: {
+      commands: {
+        run: async (command: string, options: unknown) => {
+          commandCalls.push({ command, options });
+          if (command.includes('pkill')) {
+            throw new Error('broad pkill must not be used');
+          }
+          return replacementHandle;
+        },
+      },
+    },
+    viteCommand: existingHandle,
+    waitForViteReady: async () => undefined,
+  });
+
+  await provider.restartViteServer();
+
+  assert.equal(killCount, 1);
+  assert.deepEqual(commandCalls, [
+    {
+      command: 'npm run dev',
+      options: { cwd: '/home/user/app', background: true },
+    },
+  ]);
+  assert.equal((provider as unknown as { viteCommand: unknown }).viteCommand, replacementHandle);
+});
