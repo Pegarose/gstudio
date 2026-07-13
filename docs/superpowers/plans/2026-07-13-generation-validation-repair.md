@@ -337,7 +337,7 @@ git commit -m "feat: score visual fidelity by evidence axis"
 - Consumes: artifact, brief, plan, sandbox URL, optional reference bundle.
 - Produces: one persisted `ValidationReport` and `RepairEligibility`.
 
-- [ ] **Step 1: Write hard-gate aggregation tests**
+- [x] **Step 1: Write hard-gate aggregation tests**
 
 ```ts
 test("a runtime failure keeps final status failed even when visual scores pass", async () => {
@@ -352,7 +352,7 @@ test("policy failures are not repair eligible", async () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -362,7 +362,7 @@ npx tsx --test tests/integration/validation-runner.test.ts
 
 Expected: FAIL because the runner does not exist.
 
-- [ ] **Step 3: Implement ordered validation**
+- [x] **Step 3: Implement ordered validation**
 
 Order:
 
@@ -375,7 +375,7 @@ Order:
 
 Skip downstream browser work after a build failure. Persist partial reports with skipped reasons. Inspiration mode records brand-language metrics without clone structure thresholds. Scratch mode records originality and honesty rules without source screenshot scoring.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -385,7 +385,7 @@ npx tsx --test tests/integration/validation-runner.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/generation/validation/validation-runner.ts lib/generation/orchestration/generation-orchestrator.ts lib/generation/repository.ts tests/integration/validation-runner.test.ts
