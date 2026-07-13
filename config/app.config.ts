@@ -1,3 +1,5 @@
+import type { ModelRole, ModelRoute } from '@/lib/models/contracts';
+
 // Application Configuration
 // This file contains all configurable settings for the application
 
@@ -114,6 +116,67 @@ export const appConfig = {
       // Fallback
       'google/gemini-3-pro-preview'
     ],
+
+    modelRoutes: [
+      {
+        id: 'intent-tr4', provider: 'tr4', model: 'gpt-5.4-mini',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 30_000, fallbacks: ['intent-agentrouter'],
+      },
+      {
+        id: 'intent-agentrouter', provider: 'agentrouter', model: 'gpt-5.4-mini',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 30_000, fallbacks: [],
+      },
+      {
+        id: 'vision-tr4', provider: 'tr4', model: 'gemini-3.1-flash-image',
+        capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['vision-google'],
+      },
+      {
+        id: 'vision-google', provider: 'google', model: 'gemini-3-pro-preview',
+        capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: [],
+      },
+      {
+        id: 'design-tr4', provider: 'tr4', model: 'gpt-5.5',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['design-opencode'],
+      },
+      {
+        id: 'design-opencode', provider: 'opencode', model: 'deepseek-v4-pro',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['cline-code'],
+      },
+      {
+        id: 'opencode-code', provider: 'opencode', model: 'kimi-k2.7-code',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['cline-code', 'agentrouter-code'],
+      },
+      {
+        id: 'cline-code', provider: 'cline', model: 'x-ai/grok-code-fast-1',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['agentrouter-code'],
+      },
+      {
+        id: 'agentrouter-code', provider: 'agentrouter', model: 'gpt-5.3-codex-spark',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: [],
+      },
+      {
+        id: 'repair-opencode', provider: 'opencode', model: 'qwen3.7-max',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: ['cline-code', 'agentrouter-code'],
+      },
+    ] satisfies readonly ModelRoute[],
+
+    modelRoleRoutes: {
+      intent: 'intent-tr4',
+      'vision-planner': 'vision-tr4',
+      'design-planner': 'design-tr4',
+      coder: 'opencode-code',
+      repair: 'repair-opencode',
+    } satisfies Record<ModelRole, string>,
     
     // Model display names
     modelDisplayNames: {
