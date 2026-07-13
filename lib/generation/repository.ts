@@ -134,6 +134,29 @@ export async function saveGenerationValidationReport(
   return saveGenerationPayload(id, "validation_json", report);
 }
 
+/** Associates the durable sandbox used by the live apply/validation attempt. */
+export async function setGenerationSandboxId(
+  id: string,
+  sandboxId: string,
+): Promise<GenerationRecord | null> {
+  const result = await query(
+    `UPDATE generations
+     SET sandbox_id = $2, updated_at = NOW()
+     WHERE id = $1::uuid
+     RETURNING *`,
+    [id, sandboxId],
+  );
+  return result.rows[0] ? toGenerationRecord(result.rows[0] as GenerationRow) : null;
+}
+
+/** Persists the one terminal validation report through the allowlisted JSON boundary. */
+export async function persistGenerationTerminalValidation(
+  id: string,
+  report: ValidationReport,
+): Promise<GenerationRecord | null> {
+  return saveGenerationValidationReport(id, report);
+}
+
 /**
  * Atomically reserves the generation's only automatic repair attempt. A
  * concurrent caller receives null instead of racing a second repair model.

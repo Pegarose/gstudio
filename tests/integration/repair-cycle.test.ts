@@ -253,7 +253,7 @@ test("repair policy classifies every documented failure class", () => {
   }
 });
 
-test("repair cycle claims once, applies a scoped patch, and persists only the revalidated final report", async () => {
+test("repair cycle claims once, applies a scoped patch, and returns the revalidated final report without persistence", async () => {
   const runLog: string[] = [];
   const generatedContexts: string[][] = [];
   const appliedPatches: GenerationArtifact[] = [];
@@ -304,9 +304,7 @@ test("repair cycle claims once, applies a scoped patch, and persists only the re
   assert.deepEqual(generatedContexts, [["src/App.tsx", "src/index.css"]]);
   assert.equal(appliedPatches.length, 1);
   assert.deepEqual(runLog, ["static", "dependency", "build", "browser", "capture", "visual"]);
-  assert.equal(persisted.length, 1);
-  assert.equal(persisted[0]?.generationId, "generation-1");
-  assert.equal(persisted[0]?.status, "passed");
+  assert.equal(persisted.length, 0);
 });
 
 test("a failed revalidation is terminal and never starts another repair", async () => {
@@ -353,12 +351,11 @@ test("a failed revalidation is terminal and never starts another repair", async 
   assert.match(result.repairEligibility?.reason ?? "", /automatic repair attempt has already been used/i);
   assert.equal(claimCalls, 1);
   assert.equal(generatorCalls, 1);
-  assert.equal(persisted.length, 1);
-  assert.equal(persisted[0]?.finalStatus, "failed");
+  assert.equal(persisted.length, 0);
   assert.deepEqual(runLog, ["static", "dependency", "build", "browser", "capture", "visual"]);
 });
 
-test("post-claim generator, patch, applier, and revalidation errors persist one non-retryable terminal report", async () => {
+test("post-claim generator, patch, applier, and revalidation errors return one non-retryable terminal report without persistence", async () => {
   const cases = [
     {
       name: "generator",
@@ -440,8 +437,7 @@ test("post-claim generator, patch, applier, and revalidation errors persist one 
     assert.equal(result.repairEligibility?.eligible, false, `${failure.name} must not retry`);
     assert.equal(claimCalls, 1, `${failure.name} must claim exactly once`);
     assert.equal(generatorCalls, 1, `${failure.name} must generate at most once`);
-    assert.equal(persisted.length, 1, `${failure.name} must persist one terminal report`);
-    assert.equal(persisted[0]?.finalStatus, "failed");
+    assert.equal(persisted.length, 0, `${failure.name} must not persist outside the activation boundary`);
   }
 });
 

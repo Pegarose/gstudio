@@ -67,6 +67,12 @@ export interface ValidateAndPersistInput extends ValidationRunInput {
   generationId: string;
 }
 
+export interface PersistFinalInput {
+  generationId: string;
+  report: ValidationReport;
+  status?: GenerationStatus;
+}
+
 export interface RepairAndRevalidateInput extends ValidationRunInput {
   generation: {
     id: string;
@@ -93,8 +99,9 @@ export class RepairClaimError extends Error {
 
 /**
  * Narrow dependency-injected integration boundary for post-apply validation.
- * `validateAndPersist` remains the Task 5 behavior; the repair path is an
- * explicit opt-in method and does not activate the legacy stream route.
+ * Persistence is deliberately separate from validation/repair so a live
+ * activation boundary can attach its rollback result and write one terminal
+ * report for the entire candidate application attempt.
  */
 export function createGenerationOrchestrator({
   validation,
@@ -102,11 +109,23 @@ export function createGenerationOrchestrator({
   repair,
 }: GenerationOrchestratorDependencies) {
   const runner = createValidationRunner(validation);
+  const validate = (input: ValidationRunInput): Promise<ValidationReport> => runner.run(input);
+  const persistFinal = ({ generationId, report, status }: PersistFinalInput): Promise<void> => (
+    repository.persistValidation({
+      generationId,
+      report,
+      status: status ?? report.finalStatus ?? "failed",
+    })
+  );
 
   return {
+    validate,
+
+    persistFinal,
+
     async validateAndPersist({ generationId, ...input }: ValidateAndPersistInput): Promise<ValidationReport> {
-      const report = await runner.run(input);
-      await repository.persistValidation({
+      const report = await validate(input);
+      await persistFinal({
         generationId,
         report,
         status: report.finalStatus ?? "failed",
@@ -116,11 +135,6 @@ export function createGenerationOrchestrator({
 
     async repairAndRevalidate(input: RepairAndRevalidateInput): Promise<ValidationReport> {
       if (!isRepairEligibleReport(input.initialReport)) {
-        await repository.persistValidation({
-          generationId: input.generation.id,
-          report: input.initialReport,
-          status: input.initialReport.finalStatus ?? "failed",
-        });
         return input.initialReport;
       }
 
@@ -170,11 +184,6 @@ export function createGenerationOrchestrator({
       } catch (error) {
         finalReport = terminalRepairFailureReport(input.initialReport, error);
       }
-      await repository.persistValidation({
-        generationId: input.generation.id,
-        report: finalReport,
-        status: finalReport.finalStatus ?? "failed",
-      });
       return finalReport;
     },
   };
