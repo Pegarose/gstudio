@@ -405,7 +405,7 @@ git commit -m "feat: persist deterministic validation reports"
 - Consumes: failed report, original plan, implicated files, repair model route.
 - Produces: one `GenerationArtifact` patch and final re-validation.
 
-- [ ] **Step 1: Write repair-limit and scope tests**
+- [x] **Step 1: Write repair-limit and scope tests**
 
 ```ts
 test("repair receives only implicated files", () => {
@@ -422,7 +422,7 @@ test("second automatic repair is forbidden", async () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -432,7 +432,7 @@ npx tsx --test tests/integration/repair-cycle.test.ts
 
 Expected: FAIL because repair modules do not exist.
 
-- [ ] **Step 3: Implement scoped repair**
+- [x] **Step 3: Implement scoped repair**
 
 Eligible classes are `static-rule`, `dependency`, `compile`, `runtime`, `responsive`, `accessibility`, and `visual-fidelity`. Ineligible classes are `capture-policy`, `provider-unavailable`, `secret-missing`, `sandbox-infrastructure`, and `user-input`.
 
@@ -445,7 +445,7 @@ The repair prompt includes:
 
 Generate a structured artifact patch, validate it, apply it, increment `repair_count` transactionally, and run the full validation pipeline once more. Never call repair when `repair_count >= 1`.
 
-- [ ] **Step 4: Run repair tests**
+- [x] **Step 4: Run repair tests**
 
 Run:
 
@@ -455,7 +455,7 @@ npx tsx --test tests/integration/repair-cycle.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/generation/repair lib/generation/orchestration/generation-orchestrator.ts tests/integration/repair-cycle.test.ts
