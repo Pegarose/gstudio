@@ -188,7 +188,7 @@ git commit -m "feat: validate dependencies and sandbox builds"
 - Consumes: ready sandbox URL and viewport list.
 - Produces: runtime, responsive, keyboard, reduced-motion, and Axe check results.
 
-- [ ] **Step 1: Write controlled-site validation tests**
+- [x] **Step 1: Write controlled-site validation tests**
 
 ```ts
 test("browser validator detects horizontal overflow at 320px", async () => {
@@ -203,7 +203,7 @@ test("browser validator captures page errors", async () => {
 });
 ```
 
-- [ ] **Step 2: Install browser test dependencies and verify failure**
+- [x] **Step 2: Install browser test dependencies and verify failure**
 
 Run:
 
@@ -215,7 +215,7 @@ npx tsx --test tests/validation/browser-validator.test.ts
 
 Expected: FAIL because the browser validator does not exist.
 
-- [ ] **Step 3: Implement browser hard gates**
+- [x] **Step 3: Implement browser hard gates**
 
 For widths `[320, 375, 414, 768, desktopWidth]`:
 
@@ -239,7 +239,7 @@ const axe = await new AxeBuilder({ page }).analyze();
 
 Treat serious and critical Axe violations as hard failures. Persist node selectors and help URLs as evidence.
 
-- [ ] **Step 4: Run browser tests**
+- [x] **Step 4: Run browser tests**
 
 Run:
 
@@ -249,7 +249,7 @@ npx tsx --test tests/validation/browser-validator.test.ts
 
 Expected: PASS; the overflow fixture fails validation for the expected width while the passing fixture passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add package.json package-lock.json lib/generation/validation/browser-validator.ts lib/generation/validation/browser-script.ts tests/validation/browser-validator.test.ts tests/fixtures/sites
