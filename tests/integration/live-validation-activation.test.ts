@@ -322,6 +322,101 @@ test("unreadable durable clone source artifacts fail capture-policy without star
   assert.deepEqual(subject.sandbox.restoreCalls, [["src/App.tsx"]]);
 });
 
+test("corrupt readable durable clone source PNGs fail capture-policy without starting repair", async () => {
+  const { source, output } = createVisualFixtures();
+  const sourceReference = durableCloneReference(source, "source");
+  const outputCapture = capturedVisualEvidence(output, "output");
+  const dependencies = createProductionValidationDependencies({
+    sandbox: {
+      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
+    },
+    captureOutput: async () => ({ output: outputCapture }),
+    readPng: async (image) => {
+      if (image.artifactKey.startsWith("source-")) {
+        return Buffer.from("this is not a PNG");
+      }
+      return image.artifactKey === "output-desktop" ? output.desktopScreenshot.png : output.mobileScreenshot.png;
+    },
+    validateBrowser: async () => passingBrowserReport(),
+  });
+  const validationInput: ValidationRunInput = {
+    artifact,
+    brief: { contentFacts: [], allowedPlaceholders: [] },
+    plan: { primaryCta: null, declaredPackages: [] },
+    mode: "clone",
+    sandboxId: "sandbox-1",
+    sandboxUrl: "https://sandbox.example.test",
+    desktopWidth: 1440,
+    reference: sourceReference,
+  };
+  const subject = fixture({
+    mode: "clone",
+    reference: sourceReference,
+    validate: () => runValidation(validationInput, dependencies),
+    repairedReport: passedReport,
+  });
+
+  const result = await subject.activation.activate(subject.input);
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.report.repairEligibility?.eligible, false);
+  assert.equal(result.report.repairEligibility?.failureClass, "capture-policy");
+  assert.equal(subject.repair.generateCalls, 0);
+  assert.equal(subject.repository.persisted.length, 1);
+  assert.equal(subject.repository.persisted[0]?.status, "failed");
+  assert.deepEqual(subject.sandbox.restoreCalls, [["src/App.tsx"]]);
+});
+
+test("malformed clone output evidence fails sandbox-infrastructure without starting repair", async () => {
+  const { source, output } = createVisualFixtures();
+  const sourceReference = durableCloneReference(source, "source");
+  const outputCapture = capturedVisualEvidence(output, "output");
+  const malformedOutputCapture = {
+    ...outputCapture,
+    desktopLayout: {
+      ...outputCapture.desktopLayout,
+      landmarks: "malformed layout evidence",
+    },
+  };
+  const dependencies = createProductionValidationDependencies({
+    sandbox: {
+      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
+    },
+    captureOutput: async () => ({ output: malformedOutputCapture }),
+    readPng: async (image) => (
+      image.artifactKey === "source-desktop" || image.artifactKey === "output-desktop"
+        ? output.desktopScreenshot.png
+        : output.mobileScreenshot.png
+    ),
+    validateBrowser: async () => passingBrowserReport(),
+  });
+  const validationInput: ValidationRunInput = {
+    artifact,
+    brief: { contentFacts: [], allowedPlaceholders: [] },
+    plan: { primaryCta: null, declaredPackages: [] },
+    mode: "clone",
+    sandboxId: "sandbox-1",
+    sandboxUrl: "https://sandbox.example.test",
+    desktopWidth: 1440,
+    reference: sourceReference,
+  };
+  const subject = fixture({
+    mode: "clone",
+    reference: sourceReference,
+    validate: () => runValidation(validationInput, dependencies),
+  });
+
+  const result = await subject.activation.activate(subject.input);
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.report.repairEligibility?.eligible, false);
+  assert.equal(result.report.repairEligibility?.failureClass, "sandbox-infrastructure");
+  assert.equal(subject.repair.generateCalls, 0);
+  assert.equal(subject.repository.persisted.length, 1);
+  assert.equal(subject.repository.persisted[0]?.status, "failed");
+  assert.deepEqual(subject.sandbox.restoreCalls, [["src/App.tsx"]]);
+});
+
 test("production validation rejects raw clone buffers and bare inspiration checks without durable provenance", async () => {
   const dependencies = createProductionValidationDependencies({
     sandbox: {

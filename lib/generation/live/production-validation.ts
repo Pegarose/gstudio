@@ -19,6 +19,7 @@ import {
   evaluateVisualFidelity,
   type CapturedImageReader,
   type CapturedVisualEvidenceBundle,
+  type VisualEvidenceBundle,
 } from "../validation/visual-evaluator";
 import type {
   DurableBrandLanguageBundle,
@@ -87,8 +88,10 @@ export function createProductionValidationDependencies(
       }
 
       const source = asDurableCloneReferenceEvidence(input.reference?.source);
+      if (!source) throw referenceEvidenceUnavailable();
+
       const output = asCapturedVisualEvidenceBundle(input.capture.output);
-      if (!source || !output) throw referenceEvidenceUnavailable();
+      if (!output) throw outputEvidenceUnavailable("Output capture artifact bundle is malformed.");
 
       const sourceEvidence = await adaptSourceReferenceEvidence(source, dependencies.readPng);
       const outputEvidence = await adaptOutputEvidence(output, dependencies.readPng);
@@ -124,7 +127,9 @@ async function adaptSourceReferenceEvidence(
   readPng: CapturedImageReader["readPng"],
 ) {
   try {
-    return await adaptCapturedVisualEvidence(source, { readPng });
+    const evidence = await adaptCapturedVisualEvidence(source, { readPng });
+    assertEvidenceCanBeEvaluated(evidence);
+    return evidence;
   } catch {
     throw referenceEvidenceUnavailable();
   }
@@ -136,14 +141,30 @@ async function adaptOutputEvidence(
   readPng: CapturedImageReader["readPng"],
 ) {
   try {
-    return await adaptCapturedVisualEvidence(output, { readPng });
+    const evidence = await adaptCapturedVisualEvidence(output, { readPng });
+    assertEvidenceCanBeEvaluated(evidence);
+    return evidence;
   } catch (error) {
     const evidence = error instanceof Error ? error.message : String(error);
-    throw new ValidationStepError(
-      "sandbox-infrastructure",
-      `Output evidence unavailable for live fidelity validation: ${evidence}`,
-    );
+    throw outputEvidenceUnavailable(evidence);
   }
+}
+
+/**
+ * Decode and structurally evaluate each evidence bundle before comparing the
+ * source against sandbox output. This keeps source-capture faults separate
+ * from sandbox-owned capture faults instead of letting both fall through as a
+ * repairable cross-bundle visual mismatch.
+ */
+function assertEvidenceCanBeEvaluated(evidence: VisualEvidenceBundle): void {
+  evaluateVisualFidelity({ source: evidence, output: evidence });
+}
+
+function outputEvidenceUnavailable(reason: string): ValidationStepError {
+  return new ValidationStepError(
+    "sandbox-infrastructure",
+    `Output evidence unavailable for live fidelity validation: ${reason}`,
+  );
 }
 
 function asDurableCloneReferenceEvidence(value: unknown): DurableCloneReferenceEvidence | null {
