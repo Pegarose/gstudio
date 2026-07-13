@@ -7,34 +7,31 @@ type JsonValue =
   | { [key: string]: JsonValue };
 
 const REDACTED = "[redacted]";
-const secretKeyPattern = /api[_-]?key|secret|password|passwd|token|credential|authorization|cookie|private[_-]?key|database[_-]?url|connection[_-]?string/i;
-const filesystemPathPattern = /^(?:[a-z]:[\\/]|\\\\|~[\\/]|\/(?:Users|home|var|tmp|etc|private|opt|root|mnt|srv|Volumes)(?:\/|$))/i;
+const secretKeyPattern = /api[_-]?key|secret|password|passwd|token|jwt|credential|authorization|cookie|private[_-]?key|database[_-]?url|connection[_-]?string/i;
+const filesystemPathPattern = /^(?:[a-z]:[\\/]|\\\\|~[\\/]|\.\.?[\\/]|\/(?!\/))/i;
 const secretValuePattern = /(?:\b(?:sk|rk|pk)-[a-z0-9_-]{8,}|\bgh[pous]_[a-z0-9_-]{8,}|\bgithub_pat_[a-z0-9_-]{8,}|\bAKIA[A-Z0-9]{16}\b|\bBearer\s+\S+|[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@)/i;
 
 function isSensitiveEnvironmentKey(key: string): boolean {
   return secretKeyPattern.test(key);
 }
 
-function sensitiveEnvironmentValues(): string[] {
-  return Object.entries(process.env)
-    .filter(([key, value]) => isSensitiveEnvironmentKey(key) && Boolean(value))
-    .map(([, value]) => value as string)
-    .filter(value => value.length >= 8);
+function environmentValues(): string[] {
+  return [...new Set(Object.values(process.env).filter((value): value is string => Boolean(value)))];
 }
 
 function isSensitiveString(value: string, environmentValues: string[]): boolean {
   return isSensitiveEnvironmentKey(value)
     || filesystemPathPattern.test(value)
     || secretValuePattern.test(value)
-    || environmentValues.some(environmentValue => value.includes(environmentValue));
+    || environmentValues.some(environmentValue => value === environmentValue || (environmentValue.length >= 8 && value.includes(environmentValue)));
 }
 
 export function redactProjectContext(value: JsonValue): JsonValue {
-  const environmentValues = sensitiveEnvironmentValues();
+  const currentEnvironmentValues = environmentValues();
 
   function redact(current: JsonValue): JsonValue {
     if (typeof current === "string") {
-      return isSensitiveString(current, environmentValues) ? REDACTED : current;
+      return isSensitiveString(current, currentEnvironmentValues) ? REDACTED : current;
     }
     if (Array.isArray(current)) {
       return current.map(redact);

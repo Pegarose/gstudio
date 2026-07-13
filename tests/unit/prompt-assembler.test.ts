@@ -89,3 +89,23 @@ test("redacts Windows and POSIX filesystem paths before named sections reach the
   assert.doesNotMatch(section(result.system, "project-facts"), /C:\\Users\\BCX\\.env\.local|\/home\/agent\/GStudio/);
   assert.doesNotMatch(section(result.system, "design-plan"), /\/var\/tmp\/design-plan\.json/);
 });
+
+test("redacts arbitrary and relative paths plus active environment secrets in nested context", () => {
+  const previousRuntimeJwt = process.env.RUNTIME_JWT;
+  process.env.RUNTIME_JWT = "opaque-runtime-value-12345";
+  let result;
+  try {
+    result = assembleSystemContext({
+      mode: "scratch",
+      prompt: "Build a legal-tech site",
+      projectFacts: [{ nested: [{ unrelated: "opaque-runtime-value-12345", path: "/workspace/private/.env", unc: "\\\\server\\share\\private.env" }], relative: "./private/.env" }],
+      designPlan: { nested: [{ keyStore: "/usr/local/share/keys", parent: "../private/.env", home: "~/.config/private", windows: "D:\\work\\private\\.env", unrelated: "opaque-runtime-value-12345" }] },
+    });
+  } finally {
+    if (previousRuntimeJwt === undefined) delete process.env.RUNTIME_JWT;
+    else process.env.RUNTIME_JWT = previousRuntimeJwt;
+  }
+
+  assert.doesNotMatch(section(result!.system, "project-facts"), /opaque-runtime-value-12345|\/workspace\/private\/\.env|\.\/private\/\.env|\\\\server\\share\\private\.env/);
+  assert.doesNotMatch(section(result!.system, "design-plan"), /opaque-runtime-value-12345|\/usr\/local\/share\/keys|\.\.\/private\/\.env|~\/\.config\/private|D:\\work\\private\\.env/);
+});
