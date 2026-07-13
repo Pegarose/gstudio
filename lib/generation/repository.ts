@@ -133,3 +133,18 @@ export async function saveGenerationValidationReport(
 ): Promise<GenerationRecord | null> {
   return saveGenerationPayload(id, "validation_json", report);
 }
+
+/**
+ * Atomically reserves the generation's only automatic repair attempt. A
+ * concurrent caller receives null instead of racing a second repair model.
+ */
+export async function claimGenerationRepairAttempt(id: string): Promise<GenerationRecord | null> {
+  const result = await query(
+    `UPDATE generations
+     SET repair_count = repair_count + 1, updated_at = NOW()
+     WHERE id = $1::uuid AND repair_count < 1
+     RETURNING *`,
+    [id],
+  );
+  return result.rows[0] ? toGenerationRecord(result.rows[0] as GenerationRow) : null;
+}
