@@ -90,10 +90,8 @@ export function createProductionValidationDependencies(
       const output = asCapturedVisualEvidenceBundle(input.capture.output);
       if (!source || !output) throw referenceEvidenceUnavailable();
 
-      const [sourceEvidence, outputEvidence] = await Promise.all([
-        adaptCapturedVisualEvidence(source, { readPng: dependencies.readPng }),
-        adaptCapturedVisualEvidence(output, { readPng: dependencies.readPng }),
-      ]);
+      const sourceEvidence = await adaptSourceReferenceEvidence(source, dependencies.readPng);
+      const outputEvidence = await adaptOutputEvidence(output, dependencies.readPng);
 
       return {
         mode: "clone",
@@ -114,6 +112,38 @@ function staticGate(name: string, passed: boolean): CheckResult {
 
 function referenceEvidenceUnavailable(): ValidationStepError {
   return new ValidationStepError("capture-policy", REFERENCE_EVIDENCE_UNAVAILABLE);
+}
+
+/**
+ * Source artifacts are mandatory durable clone evidence. A malformed key or a
+ * rejected artifact-store read means clone fidelity cannot be evaluated, not
+ * that the generated candidate has a repairable visual defect.
+ */
+async function adaptSourceReferenceEvidence(
+  source: CapturedVisualEvidenceBundle,
+  readPng: CapturedImageReader["readPng"],
+) {
+  try {
+    return await adaptCapturedVisualEvidence(source, { readPng });
+  } catch {
+    throw referenceEvidenceUnavailable();
+  }
+}
+
+/** Output evidence is sandbox-owned; a read failure is infrastructure, never a repairable fidelity score. */
+async function adaptOutputEvidence(
+  output: CapturedVisualEvidenceBundle,
+  readPng: CapturedImageReader["readPng"],
+) {
+  try {
+    return await adaptCapturedVisualEvidence(output, { readPng });
+  } catch (error) {
+    const evidence = error instanceof Error ? error.message : String(error);
+    throw new ValidationStepError(
+      "sandbox-infrastructure",
+      `Output evidence unavailable for live fidelity validation: ${evidence}`,
+    );
+  }
 }
 
 function asDurableCloneReferenceEvidence(value: unknown): DurableCloneReferenceEvidence | null {

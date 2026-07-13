@@ -16,6 +16,7 @@ import {
   type ValidationRunInput,
 } from "../../lib/generation/validation/validation-runner";
 import type { SandboxFileSnapshot, SandboxService } from "../../lib/sandbox/service/contracts";
+import type { CapturedVisualEvidenceBundle } from "../../lib/generation/validation/visual-evaluator";
 import { createVisualFixtures } from "../fixtures/visual/visual-fixtures";
 
 const artifact: GenerationArtifact = {
@@ -83,6 +84,7 @@ type FixtureOptions = {
   mode?: ValidationRunInput["mode"];
   reference?: ValidationRunInput["reference"];
   persistFinalError?: Error;
+  validate?: () => Promise<ValidationReport>;
 };
 
 function fixture(options: FixtureOptions = {}) {
@@ -110,7 +112,7 @@ function fixture(options: FixtureOptions = {}) {
       ? capturePolicyReport
       : failedRuntimeReport);
   const orchestrator: LiveValidationOrchestrator = {
-    validate: async () => initialReport,
+    validate: options.validate ?? (async () => initialReport),
     repairAndRevalidate: async () => {
       repair.generateCalls += 1;
       return options.repairedReport ?? initialReport;
@@ -276,6 +278,50 @@ test("production clone validation reports missing reference evidence as capture-
   assert.equal(report.repairEligibility?.failureClass, "capture-policy");
 });
 
+test("unreadable durable clone source artifacts fail capture-policy without starting repair", async () => {
+  const { source, output } = createVisualFixtures();
+  const sourceReference = durableCloneReference(source, "source");
+  const outputCapture = capturedVisualEvidence(output, "output");
+  const dependencies = createProductionValidationDependencies({
+    sandbox: {
+      runCommand: async () => ({ exitCode: 0, stdout: "", stderr: "", success: true }),
+    },
+    captureOutput: async () => ({ output: outputCapture }),
+    readPng: async (image) => {
+      if (image.artifactKey.startsWith("source-")) {
+        throw new Error("source artifact store read rejected");
+      }
+      return image.artifactKey === "output-desktop" ? output.desktopScreenshot.png : output.mobileScreenshot.png;
+    },
+    validateBrowser: async () => passingBrowserReport(),
+  });
+  const validationInput: ValidationRunInput = {
+    artifact,
+    brief: { contentFacts: [], allowedPlaceholders: [] },
+    plan: { primaryCta: null, declaredPackages: [] },
+    mode: "clone",
+    sandboxId: "sandbox-1",
+    sandboxUrl: "https://sandbox.example.test",
+    desktopWidth: 1440,
+    reference: sourceReference,
+  };
+  const subject = fixture({
+    mode: "clone",
+    reference: sourceReference,
+    validate: () => runValidation(validationInput, dependencies),
+  });
+
+  const result = await subject.activation.activate(subject.input);
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.report.repairEligibility?.eligible, false);
+  assert.equal(result.report.repairEligibility?.failureClass, "capture-policy");
+  assert.equal(subject.repair.generateCalls, 0);
+  assert.equal(subject.repository.persisted.length, 1);
+  assert.equal(subject.repository.persisted[0]?.status, "failed");
+  assert.deepEqual(subject.sandbox.restoreCalls, [["src/App.tsx"]]);
+});
+
 test("production validation rejects raw clone buffers and bare inspiration checks without durable provenance", async () => {
   const dependencies = createProductionValidationDependencies({
     sandbox: {
@@ -326,3 +372,58 @@ test("production validation rejects raw clone buffers and bare inspiration check
       && error.failureClass === "capture-policy",
   );
 });
+
+function durableCloneReference(
+  bundle: ReturnType<typeof createVisualFixtures>["source"],
+  keyPrefix: string,
+): ValidationRunInput["reference"] {
+  return {
+    source: {
+      kind: "clone-reference-v1",
+      captureId: "capture-1",
+      sourceUrl: "https://example.test",
+      capturedAt: "2026-07-14T00:00:00.000Z",
+      ...capturedVisualEvidence(bundle, keyPrefix),
+    },
+  };
+}
+
+function capturedVisualEvidence(
+  bundle: ReturnType<typeof createVisualFixtures>["source"],
+  keyPrefix: string,
+): CapturedVisualEvidenceBundle {
+  return {
+    desktopScreenshot: {
+      artifactKey: `${keyPrefix}-desktop`,
+      mediaType: "image/png",
+      width: bundle.desktopScreenshot.viewport.width,
+      height: bundle.desktopScreenshot.viewport.height,
+      devicePixelRatio: bundle.desktopScreenshot.viewport.devicePixelRatio,
+    },
+    mobileScreenshot: {
+      artifactKey: `${keyPrefix}-mobile`,
+      mediaType: "image/png",
+      width: bundle.mobileScreenshot.viewport.width,
+      height: bundle.mobileScreenshot.viewport.height,
+      devicePixelRatio: bundle.mobileScreenshot.viewport.devicePixelRatio,
+    },
+    desktopLayout: bundle.desktopLayout,
+    mobileLayout: bundle.mobileLayout,
+  };
+}
+
+function passingBrowserReport() {
+  return {
+    runtime: { passed: true, evidence: "runtime passed" },
+    responsive: [320, 375, 414, 768, 1440].map((width) => ({
+      width,
+      horizontalOverflow: false,
+      passed: true,
+      evidence: `${width}px passed`,
+    })),
+    keyboard: { passed: true, evidence: "keyboard passed" },
+    reducedMotion: { passed: true, evidence: "motion passed" },
+    accessibility: { passed: true, evidence: "accessibility passed" },
+    passed: true,
+  };
+}
