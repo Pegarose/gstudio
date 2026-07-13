@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { normalizeBrandGuidelines } from '@/lib/brand-guidelines.js';
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,14 +50,15 @@ export async function POST(request: NextRequest) {
       throw new Error('No branding data in Firecrawl response');
     }
 
-    console.log('[extract-brand-styles] Successfully extracted branding data');
+    const normalizedBrandingData = normalizeBrandGuidelines(brandingData);
+    console.log('[extract-brand-styles] Successfully extracted and normalized branding data');
 
     // Return the branding data
     return NextResponse.json({
       success: true,
       url,
-      styleName: brandingData.name || url,
-      guidelines: brandingData,
+      styleName: normalizedBrandingData.name || url,
+      guidelines: normalizedBrandingData,
     });
 
   } catch (error) {

@@ -42,7 +42,7 @@ export default function HomePage() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   
   // New Project Form States
-  const [modalTab, setModalTab] = useState<"clone" | "scratch">("clone");
+  const [modalTab, setModalTab] = useState<"clone" | "inspire" | "scratch">("clone");
   const [projectName, setProjectName] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("4"); // Minimalist default
@@ -50,73 +50,7 @@ export default function HomePage() {
   const [coderModel, setCoderModel] = useState("kimi-k2.7-code"); // default coding model
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   
-  // Mock Workspace Projects
-  const [projects, setProjects] = useState<Project[]>([
-    {
-      id: "1",
-      name: "Elegant Portfolio",
-      targetUrl: "https://elegant-portfolio.lovable.app",
-      style: "Minimalist",
-      planningModel: "google/gemini-3-pro-preview",
-      coderModel: "moonshotai/kimi-k2-instruct-0905",
-      status: "completed",
-      updatedAt: "Edited 4 minutes ago",
-      colorTheme: "from-indigo-600/30 to-purple-600/10",
-      screenshot: "https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=600&q=80",
-      isStarred: true,
-      visibility: "public",
-      creator: "me",
-      createdAt: new Date(Date.now() - 4 * 60 * 1000).toISOString()
-    },
-    {
-      id: "2",
-      name: "Remix of Event Template",
-      targetUrl: "https://events-template.lovable.app",
-      style: "Gradient Rich",
-      planningModel: "anthropic/claude-sonnet-4-20250514",
-      coderModel: "openai/gpt-5",
-      status: "active",
-      updatedAt: "Edited 2 hours ago",
-      colorTheme: "from-emerald-600/30 to-teal-600/10",
-      screenshot: "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=600&q=80",
-      isStarred: false,
-      visibility: "public",
-      creator: "collaborators",
-      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "3",
-      name: "Remix of Stark Architect Showcase",
-      targetUrl: "https://stark-architecture.lovable.app",
-      style: "Minimalist",
-      planningModel: "google/gemini-3-pro-preview",
-      coderModel: "moonshotai/kimi-k2-instruct-0905",
-      status: "completed",
-      updatedAt: "Edited 2 hours ago",
-      colorTheme: "from-zinc-700/40 to-neutral-900/20",
-      screenshot: "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=600&q=80",
-      isStarred: false,
-      visibility: "private",
-      creator: "me",
-      createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      id: "4",
-      name: "Remix of creative-photographer",
-      targetUrl: "https://creative-photographer.lovable.app",
-      style: "Dark Mode",
-      planningModel: "openai/gpt-5",
-      coderModel: "openai/gpt-5",
-      status: "progress",
-      updatedAt: "Edited 5 hours ago",
-      colorTheme: "from-rose-500/30 to-orange-600/10",
-      screenshot: "https://images.unsplash.com/photo-1452587925148-ce544e77e70d?auto=format&fit=crop&w=600&q=80",
-      isStarred: false,
-      visibility: "private",
-      creator: "collaborators",
-      createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
-    }
-  ]);
+  const [projects, setProjects] = useState<Project[]>([]);
 
   useEffect(() => {
     fetch('/api/projects')
@@ -136,16 +70,7 @@ export default function HomePage() {
             screenshot: p.screenshot || undefined
           }));
           
-          // Merge db projects with screenshots fallback
-          setProjects(prev => {
-            const list = [...dbProjects];
-            prev.forEach(mock => {
-              if (!list.some(x => x.id === mock.id || x.name === mock.name)) {
-                list.push(mock);
-              }
-            });
-            return list;
-          });
+          setProjects(dbProjects);
         }
       })
       .catch(err => console.error("Error loading projects:", err));
@@ -179,14 +104,17 @@ export default function HomePage() {
       return;
     }
 
-    const finalUrl = modalTab === "clone" ? targetUrl.trim() : "scratch://new-project";
+    const generationIntent = modalTab;
+    const finalUrl = modalTab === "scratch" ? "scratch://new-project" : targetUrl.trim();
     
-    if (modalTab === "clone") {
+    if (modalTab !== "scratch") {
       if (!finalUrl || !validateUrl(finalUrl)) {
         toast.error("Please enter a valid URL (e.g., https://example.com)");
         return;
       }
-    } else {
+    }
+
+    if (modalTab !== "clone") {
       if (!additionalInstructions.trim()) {
         toast.error("Please describe what you would like to build");
         return;
@@ -201,9 +129,15 @@ export default function HomePage() {
     sessionStorage.setItem("selectedCoderModel", coderModel);
     sessionStorage.setItem("projectName", projectName.trim());
     sessionStorage.setItem("additionalInstructions", additionalInstructions.trim());
+    sessionStorage.setItem("generationIntent", generationIntent);
     sessionStorage.setItem("autoStart", "true");
 
-    toast.success(modalTab === "clone" ? "Initializing website clone..." : "Initializing blank project from scratch...");
+    const launchMessages = {
+      clone: "Preparing a faithful website recreation...",
+      inspire: "Extracting visual direction for an original build...",
+      scratch: "Initializing a blank project from scratch..."
+    };
+    toast.success(launchMessages[generationIntent]);
     router.push("/generation");
   };
 
@@ -262,16 +196,15 @@ export default function HomePage() {
         method: 'DELETE'
       });
       const data = await response.json();
-      if (data.success) {
-        setProjects(prev => prev.filter(p => p.id !== id));
-        toast.success("Project deleted successfully");
-      } else {
-        setProjects(prev => prev.filter(p => p.id !== id));
-        toast.success("Project deleted successfully");
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Project could not be deleted');
       }
-    } catch (err) {
       setProjects(prev => prev.filter(p => p.id !== id));
       toast.success("Project deleted successfully");
+      setMenuProjectId(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      toast.error(`Failed to delete project: ${message}`);
     }
   };
 
@@ -354,8 +287,12 @@ export default function HomePage() {
 
   return (
     <div 
-      className="min-h-screen bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-100 font-sans antialiased"
-      style={{ display: "flex", minHeight: "100vh" }}
+      className="min-h-screen bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-100 antialiased"
+      style={{
+        display: "flex",
+        minHeight: "100vh",
+        fontFamily: 'var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif'
+      }}
     >
       {/* LOVABLE HIGH FIDELITY SIDEBAR */}
       <aside 
@@ -374,7 +311,7 @@ export default function HomePage() {
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-orange-600 to-amber-500 flex items-center justify-center font-extrabold text-white shadow-md text-xs flex-shrink-0">
                   G
                 </div>
-                <span className="truncate text-left font-bold text-neutral-900 dark:text-neutral-100 font-sans">Samlee's Lovable</span>
+                <span className="truncate text-left font-bold text-neutral-900 dark:text-neutral-100">G Studio</span>
               </div>
               <svg className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -392,7 +329,7 @@ export default function HomePage() {
                   }}
                   className="w-full text-left px-12 py-8 hover:bg-neutral-50 dark:hover:bg-neutral-800 flex items-center justify-between font-semibold"
                 >
-                  <span>Samlee's Lovable</span>
+                  <span>G Studio workspace</span>
                   <span className="w-4 h-4 rounded-full bg-green-500 text-white flex items-center justify-center text-[8px] font-bold">✓</span>
                 </button>
                 <button
@@ -538,14 +475,14 @@ export default function HomePage() {
           {/* Share Block */}
           <div 
             onClick={() => {
-              navigator.clipboard.writeText("https://lovable.dev/?ref=samlee");
+              navigator.clipboard.writeText(window.location.origin);
               toast.success("Referral link copied to clipboard!");
             }}
             className="p-12 bg-[#f3f3f5] dark:bg-neutral-800 rounded-xl border border-neutral-200/50 dark:border-neutral-700/50 flex items-center justify-between cursor-pointer hover:bg-neutral-200/60 dark:hover:bg-neutral-750 transition-all"
           >
             <div className="min-w-0">
-              <div className="text-[11px] font-bold text-neutral-900 dark:text-white">Share Lovable</div>
-              <div className="text-[9px] text-neutral-500 truncate mt-1">Get 10 credits each</div>
+              <div className="text-[11px] font-bold text-neutral-900 dark:text-white">Share G Studio</div>
+              <div className="text-[9px] text-neutral-500 truncate mt-1">Copy workspace link</div>
             </div>
             <svg className="w-4 h-4 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -575,8 +512,8 @@ export default function HomePage() {
                 S
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 truncate">Samlee</div>
-                <div className="text-[8px] text-neutral-500 truncate font-semibold">Pro Plan</div>
+                <div className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 truncate">Workspace</div>
+                <div className="text-[8px] text-neutral-500 truncate font-semibold">Pro plan</div>
               </div>
             </div>
             {/* Bell Icon Notification Badge */}
@@ -775,6 +712,7 @@ export default function HomePage() {
                         <td className="p-16 text-right relative">
                           <button
                             type="button"
+                            aria-label={`Open actions for ${project.name}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               setMenuProjectId(menuProjectId === project.id ? null : project.id);
@@ -847,6 +785,7 @@ export default function HomePage() {
                               <div className="h-[1px] bg-neutral-100 dark:bg-neutral-800 my-4" />
                               <button
                                 type="button"
+                                aria-label={`Delete ${project.name}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDeleteProject(project.id, project.name);
@@ -931,6 +870,7 @@ export default function HomePage() {
                         </h3>
                         <button
                           type="button"
+                          aria-label={`Open actions for ${project.name}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             setMenuProjectId(menuProjectId === project.id ? null : project.id);
@@ -1008,6 +948,7 @@ export default function HomePage() {
                         <div className="h-[1px] bg-neutral-100 dark:bg-neutral-800 my-4" />
                         <button
                           type="button"
+                          aria-label={`Delete ${project.name}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDeleteProject(project.id, project.name);
@@ -1064,6 +1005,17 @@ export default function HomePage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setModalTab("inspire")}
+                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
+                    modalTab === "inspire"
+                      ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm"
+                      : "text-neutral-500 hover:text-neutral-300"
+                  }`}
+                >
+                  Use as Inspiration
+                </button>
+                <button
+                  type="button"
                   onClick={() => setModalTab("scratch")}
                   className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
                     modalTab === "scratch"
@@ -1084,13 +1036,15 @@ export default function HomePage() {
                     required
                     value={projectName}
                     onChange={e => setProjectName(e.target.value)}
-                    placeholder={modalTab === "clone" ? "Acme UI Portal" : "Acme Todo App"}
+                    placeholder={modalTab === "scratch" ? "Acme Todo App" : "Acme UI Portal"}
                     className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 text-neutral-800 dark:text-white"
                   />
                 </div>
-                {modalTab === "clone" ? (
+                {modalTab !== "scratch" ? (
                   <div className="space-y-4">
-                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">URL to Scrape & Clone</label>
+                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">
+                      {modalTab === "clone" ? "URL to Recreate" : "Reference URL"}
+                    </label>
                     <input
                       type="text"
                       required
@@ -1183,13 +1137,15 @@ export default function HomePage() {
                   {modalTab === "clone" ? "Additional Specifications" : "What would you like to build? (Required)"}
                 </label>
                 <textarea
-                  required={modalTab === "scratch"}
+                  required={modalTab !== "clone"}
                   value={additionalInstructions}
                   onChange={e => setAdditionalInstructions(e.target.value)}
                   placeholder={
                     modalTab === "clone"
-                      ? "e.g. Integrate responsive menu, add state management with Zustand, etc."
-                      : "Describe your app, e.g. A crypto dashboard with 3 chart tabs, mock transactions history, and a modern layout."
+                      ? "Describe any deliberate changes to the recreated structure."
+                      : modalTab === "inspire"
+                        ? "Describe the original product to build using only the reference site's visual language."
+                        : "Describe your app, e.g. A crypto dashboard with 3 chart tabs, mock transactions history, and a modern layout."
                   }
                   className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 text-neutral-800 dark:text-white min-h-[80px] resize-none"
                 />
