@@ -51,20 +51,51 @@ export const VisualEvaluationSchema = z.object({
   color: z.number().min(0).max(1),
   spacing: z.number().min(0).max(1),
   screenshot: z.number().min(0).max(1),
+  responsive: z.number().min(0).max(1).optional(),
 });
+
+export const ValidationFailureClassSchema = z.enum([
+  "static-rule",
+  "dependency",
+  "compile",
+  "runtime",
+  "responsive",
+  "accessibility",
+  "visual-fidelity",
+  "capture-policy",
+  "provider-unavailable",
+  "secret-missing",
+  "sandbox-infrastructure",
+  "user-input",
+]);
 
 export const RepairEligibilitySchema = z.object({
   eligible: z.boolean(),
+  reason: z.string().min(1),
+  failureClass: ValidationFailureClassSchema.optional(),
+});
+
+export const SkippedValidationStepSchema = z.object({
+  step: z.enum(["build", "browser", "capture", "visual"]),
   reason: z.string().min(1),
 });
 
 export const ValidationReportSchema = z.object({
   static: z.array(RuleViolationSchema).default([]),
+  dependency: CheckResultSchema.optional(),
+  build: CheckResultSchema.optional(),
   compile: CheckResultSchema.optional(),
   runtime: CheckResultSchema.optional(),
+  keyboard: CheckResultSchema.optional(),
+  reducedMotion: CheckResultSchema.optional(),
   accessibility: CheckResultSchema.optional(),
   responsive: z.array(ResponsiveCheckResultSchema).default([]),
+  capture: CheckResultSchema.optional(),
   visual: VisualEvaluationSchema.optional(),
+  brandLanguage: CheckResultSchema.optional(),
+  originality: CheckResultSchema.optional(),
+  honesty: CheckResultSchema.optional(),
+  skipped: z.array(SkippedValidationStepSchema).optional(),
   repairEligibility: RepairEligibilitySchema.optional(),
   finalStatus: z.enum(["passed", "failed"]).optional(),
 });
@@ -77,5 +108,7 @@ export type RuleViolation = z.infer<typeof RuleViolationSchema>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type ResponsiveCheckResult = z.infer<typeof ResponsiveCheckResultSchema>;
 export type VisualEvaluation = z.infer<typeof VisualEvaluationSchema>;
+export type ValidationFailureClass = z.infer<typeof ValidationFailureClassSchema>;
 export type RepairEligibility = z.infer<typeof RepairEligibilitySchema>;
+export type SkippedValidationStep = z.infer<typeof SkippedValidationStepSchema>;
 export type ValidationReport = z.infer<typeof ValidationReportSchema>;

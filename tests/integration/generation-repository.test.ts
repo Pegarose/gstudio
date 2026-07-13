@@ -6,13 +6,14 @@ import { query } from "../../lib/db";
 import {
   createGeneration,
   getGeneration,
+  saveGenerationPayload,
+  saveGenerationValidationReport,
   updateGenerationStage,
 } from "../../lib/generation/repository";
 import {
   appendGenerationEvent,
   listGenerationEvents,
 } from "../../lib/generation/event-repository";
-import { saveGenerationPayload } from "../../lib/generation/repository";
 import {
   getSandboxLease,
   markSandboxLeaseState,
@@ -95,6 +96,36 @@ test("generation payloads use an allowlist and sandbox leases persist state", as
     const lease = await getSandboxLease("generation-test-sandbox");
     assert.equal(lease?.state, "ready");
     assert.equal(lease?.projectId, String(project.rows[0].id));
+  } finally {
+    await query("DELETE FROM projects WHERE id = $1", [project.rows[0].id]);
+  }
+});
+
+test("generation validation reports persist through the validation_json payload boundary", async () => {
+  const project = await query(
+    "INSERT INTO projects (name, target_url) VALUES ($1, $2) RETURNING id",
+    ["generation-validation-report-test", ""],
+  );
+  const generationId = randomUUID();
+  const report = {
+    static: [],
+    responsive: [],
+    repairEligibility: { eligible: false, reason: "All required validation hard gates passed." },
+    finalStatus: "passed" as const,
+  };
+
+  try {
+    await createGeneration({
+      id: generationId,
+      projectId: String(project.rows[0].id),
+      mode: "scratch",
+      prompt: "Build a newsroom",
+      targetUrl: null,
+      userId: null,
+    });
+    await saveGenerationValidationReport(generationId, report);
+
+    assert.deepEqual((await getGeneration(generationId))?.validation, report);
   } finally {
     await query("DELETE FROM projects WHERE id = $1", [project.rows[0].id]);
   }

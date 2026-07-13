@@ -1,6 +1,7 @@
 import { query } from "../db";
 import type { CreateGenerationInput } from "./contracts/identity";
 import type { GenerationStage, GenerationStatus } from "./contracts/state";
+import type { ValidationReport } from "./contracts/validation";
 
 const payloadColumns = [
   "brief_json",
@@ -123,4 +124,12 @@ export async function saveGenerationPayload(
     [id, JSON.stringify(value)],
   );
   return result.rows[0] ? toGenerationRecord(result.rows[0] as GenerationRow) : null;
+}
+
+/** Persist a validation report through the existing allowlisted JSON column. */
+export async function saveGenerationValidationReport(
+  id: string,
+  report: ValidationReport,
+): Promise<GenerationRecord | null> {
+  return saveGenerationPayload(id, "validation_json", report);
 }
