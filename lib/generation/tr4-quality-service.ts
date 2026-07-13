@@ -160,10 +160,6 @@ export async function repairGeneratedCode({
     repairedCandidate += textPart;
   }
 
-  if (!repairedCandidate.includes('<file path="') && !repairedCandidate.includes("</file>")) {
-    throw new Error("TR4 repair model returned an invalid file artifact");
-  }
-
   try {
     assertCompleteRepairArtifact({ candidate, repaired: repairedCandidate });
   } catch (error) {

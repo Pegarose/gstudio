@@ -8,7 +8,8 @@ type JsonValue =
 
 const REDACTED = "[redacted]";
 const secretKeyPattern = /api[_-]?key|secret|password|passwd|token|jwt|credential|authorization|cookie|private[_-]?key|database[_-]?url|connection[_-]?string/i;
-const filesystemPathPattern = /^(?:[a-z]:[\\/]|\\\\|~[\\/]|\.\.?[\\/]|\/(?!\/))/i;
+const absoluteFilesystemPathPattern = /(?:^|[\s"'`=(])(?:[a-z]:[\\/]|[\\/]|~[\\/])/i;
+const relativeFilesystemPathPattern = /^\.\.?[\\/]/;
 const secretValuePattern = /(?:\b(?:sk|rk|pk)-[a-z0-9_-]{8,}|\bgh[pous]_[a-z0-9_-]{8,}|\bgithub_pat_[a-z0-9_-]{8,}|\bAKIA[A-Z0-9]{16}\b|\bBearer\s+\S+|[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@)/i;
 
 function isSensitiveEnvironmentKey(key: string): boolean {
@@ -19,9 +20,14 @@ function environmentValues(): string[] {
   return [...new Set(Object.values(process.env).filter((value): value is string => Boolean(value)))];
 }
 
-function isSensitiveString(value: string, environmentValues: string[]): boolean {
+function isSensitiveString(
+  value: string,
+  environmentValues: string[],
+  redactRelativePaths = true,
+): boolean {
   return isSensitiveEnvironmentKey(value)
-    || filesystemPathPattern.test(value)
+    || absoluteFilesystemPathPattern.test(value)
+    || (redactRelativePaths && relativeFilesystemPathPattern.test(value))
     || secretValuePattern.test(value)
     || environmentValues.some(environmentValue => value === environmentValue || (environmentValue.length >= 8 && value.includes(environmentValue)));
 }
@@ -39,7 +45,8 @@ export function redactProjectContext(value: JsonValue): JsonValue {
     if (current !== null && typeof current === "object") {
       return Object.fromEntries(
         Object.entries(current)
-          .filter(([key]) => !isSensitiveEnvironmentKey(key))
+          // Object keys can be rendered as file paths in model prompts and logs.
+          .filter(([key]) => !isSensitiveString(key, currentEnvironmentValues, false))
           .map(([key, nestedValue]) => [key, redact(nestedValue)]),
       );
     }

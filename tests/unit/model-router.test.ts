@@ -20,13 +20,13 @@ test("router throws when no route satisfies required capabilities", () => {
   assert.throws(() => router.resolve({ vision: true }));
 });
 
-test("OpenCode Kimi fallback stays within the configured TR4 provider", () => {
+test("router follows a configured fallback route", () => {
   const router = createModelRouter([
-    { id: "opencode-code", provider: "opencode", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["tr4-code"] },
-    { id: "tr4-code", provider: "tr4", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
+    { id: "primary-code", provider: "tr4", model: "gpt-5.3-codex-spark", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["repair-code"] },
+    { id: "repair-code", provider: "tr4", model: "gpt-5.6-sol", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
   ]);
 
-  assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "tr4-code");
+  assert.equal(router.fallbacksFor("primary-code", { structuredOutput: true })[0].id, "repair-code");
 });
 
 test("configured active routes do not define fallbacks", () => {

@@ -45,8 +45,6 @@ function getProviderSettings(
       return { apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GROQ_API_KEY, baseURL: process.env.AI_GATEWAY_API_KEY ? aiGatewayBaseURL : process.env.GROQ_BASE_URL };
     case 'google':
       return { apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY, baseURL: process.env.AI_GATEWAY_API_KEY ? aiGatewayBaseURL : process.env.GEMINI_BASE_URL };
-    case 'opencode':
-      return { apiKey: process.env.OPENCODEGO_API_KEY, baseURL: withV1Suffix(process.env.OPENCODEGO_API_BASE) };
     case 'tr4':
       return { apiKey: process.env.TR4_API_KEY, baseURL: withV1Suffix(process.env.TR4_API_BASE) };
     case 'agentrouter':

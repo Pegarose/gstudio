@@ -79,14 +79,28 @@ test('generation route validates and repairs generated code before completion', 
   assert.ok(qualityGateIndex < completeIndex, 'quality gate runs before completion');
 });
 
+test('generation route sends terminal quality errors without emitting complete', () => {
+  const qualityErrorStart = route.indexOf('if (error instanceof GenerationQualityError)');
+  const qualityErrorEnd = route.indexOf("// Check if it's a tool validation error", qualityErrorStart);
+  const qualityErrorBranch = route.slice(qualityErrorStart, qualityErrorEnd);
+
+  assert.ok(qualityErrorStart >= 0, 'quality error branch is present');
+  assert.match(qualityErrorBranch, /type:\s*'error'/);
+  assert.match(qualityErrorBranch, /validation:\s*error\.validation/);
+  assert.match(qualityErrorBranch, /repairCount:\s*error\.repairCount/);
+  assert.doesNotMatch(qualityErrorBranch, /type:\s*'complete'/);
+});
+
 test('generation route rebuilds approved files through the complete artifact parser', () => {
   assert.match(route, /import\s+\{[^}]*parseCompleteFileArtifact[^}]*\}\s+from ["']@\/lib\/generation\/tr4-quality-service["']/);
   assert.match(route, /const validatedFiles = parseCompleteFileArtifact\(generatedCode\)/);
   assert.doesNotMatch(route, /const validatedFileRegex = \/<file path=/);
 });
 
-test('runtime and generation specification do not define an unconfigured Cline provider', () => {
+test('runtime and generation specification do not define unconfigured OpenCode or Cline providers', () => {
+  assert.doesNotMatch(providerContracts, /\|\s*["']opencode["']/);
   assert.doesNotMatch(providerContracts, /\|\s*["']cline["']/);
+  assert.doesNotMatch(providerManager, /OPENCODEGO_API_KEY|OPENCODEGO_API_BASE|case ["']opencode["']/);
   assert.doesNotMatch(providerManager, /case ["']cline["']/);
   assert.doesNotMatch(providerManager, /CLINE_API_KEY/);
   assert.doesNotMatch(agentInstructions, /primary AI -> Cline/);

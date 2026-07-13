@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { MockLanguageModelV2, simulateReadableStream } from "ai/test";
 import {
   assertCompleteRepairArtifact,
   buildRepairPrompt,
   buildReviewMessages,
+  repairGeneratedCode,
 } from "../../lib/generation/tr4-quality-service";
-import type { GenerationValidation } from "../../lib/generation/quality-gate";
+import {
+  GenerationQualityError,
+  type GenerationValidation,
+} from "../../lib/generation/quality-gate";
 
 test("buildReviewMessages includes the original brief and generated candidate", () => {
   const candidate = '<file path="src/App.jsx">ok</file>';
@@ -90,4 +95,110 @@ test("assertCompleteRepairArtifact accepts a complete repair with the candidate 
   ].join("\n");
 
   assert.doesNotThrow(() => assertCompleteRepairArtifact({ candidate, repaired }));
+});
+
+test("repairGeneratedCode turns a streamed partial artifact into a terminal quality error", async () => {
+  const candidate = [
+    '<file path="src/App.tsx">export default function App() { return null; }</file>',
+    '<file path="src/styles.css">body { margin: 0; }</file>',
+  ].join("\n");
+  const validation: GenerationValidation = {
+    pass: false,
+    summary: "The project needs a complete repair.",
+    findings: [
+      {
+        severity: "blocking",
+        category: "completeness",
+        file: "src/styles.css",
+        message: "The stylesheet is missing.",
+        repairInstruction: "Return every candidate file.",
+      },
+    ],
+  };
+  const model = new MockLanguageModelV2({
+    doStream: {
+      stream: simulateReadableStream({
+        initialDelayInMs: null,
+        chunkDelayInMs: null,
+        chunks: [
+          { type: "text-start", id: "repair-1" },
+          {
+            type: "text-delta",
+            id: "repair-1",
+            delta: '<file path="src/App.tsx">export default function App() { return <main />; }</file>',
+          },
+          { type: "text-end", id: "repair-1" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        ],
+      }),
+    },
+  });
+
+  await assert.rejects(
+    () => repairGeneratedCode({ model, candidate, validation }),
+    (error: unknown) => {
+      assert.equal(error instanceof GenerationQualityError, true);
+      assert.equal(
+        (error as GenerationQualityError).message,
+        "TR4 repair model returned an incomplete file artifact",
+      );
+      assert.equal((error as GenerationQualityError).validation, validation);
+      assert.equal((error as GenerationQualityError).repairCount, 1);
+      return true;
+    },
+  );
+  assert.equal(model.doStreamCalls.length, 1);
+});
+
+test("repairGeneratedCode turns a streamed response without file tags into a terminal quality error", async () => {
+  const candidate = '<file path="src/App.tsx">export default function App() { return null; }</file>';
+  const validation: GenerationValidation = {
+    pass: false,
+    summary: "The repair must include the application file.",
+    findings: [
+      {
+        severity: "blocking",
+        category: "completeness",
+        file: "src/App.tsx",
+        message: "The repair artifact has no files.",
+        repairInstruction: "Return the complete application file.",
+      },
+    ],
+  };
+  const model = new MockLanguageModelV2({
+    doStream: {
+      stream: simulateReadableStream({
+        initialDelayInMs: null,
+        chunkDelayInMs: null,
+        chunks: [
+          { type: "text-start", id: "repair-2" },
+          { type: "text-delta", id: "repair-2", delta: "I fixed the component." },
+          { type: "text-end", id: "repair-2" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        ],
+      }),
+    },
+  });
+
+  await assert.rejects(
+    () => repairGeneratedCode({ model, candidate, validation }),
+    (error: unknown) => {
+      assert.equal(error instanceof GenerationQualityError, true);
+      assert.equal(
+        (error as GenerationQualityError).message,
+        "TR4 repair model returned an incomplete file artifact",
+      );
+      assert.equal((error as GenerationQualityError).validation, validation);
+      assert.equal((error as GenerationQualityError).repairCount, 1);
+      return true;
+    },
+  );
 });

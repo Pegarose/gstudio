@@ -48,3 +48,42 @@ test("sanitizes secrets and filesystem paths before generation data reaches a mo
     }
   }
 });
+
+test("removes absolute currentFiles map keys and values while preserving relative paths", () => {
+  const windowsPath = "C:\\Users\\reviewer\\private-project\\App.tsx";
+  const posixPath = "/Users/reviewer/private-project/src/styles.css";
+  const rootedWindowsPath = "\\Users\\reviewer\\private-project\\Rooted.tsx";
+  const uncPath = "//server/share/private-project/Share.tsx";
+  const dotRelativePath = "./src/preview.tsx";
+  const parentRelativePath = "../shared/button.tsx";
+  const sanitized = sanitizeGenerationModelInput({
+    prompt: "Fix the existing application.",
+    context: {
+      currentFiles: {
+        [windowsPath]: "export default function App() { return null; }",
+        [posixPath]: "body { margin: 0; }",
+        [rootedWindowsPath]: "export default function Rooted() { return null; }",
+        [uncPath]: "export default function Share() { return null; }",
+        "src/main.tsx": 'const configPath = "/Users/reviewer/private-project/config.json";',
+        [dotRelativePath]: "export default function Preview() { return null; }",
+        [parentRelativePath]: "export const button = true;",
+      },
+    },
+  });
+
+  const context = sanitized.context as {
+    currentFiles: Record<string, string>;
+  };
+  const serialized = JSON.stringify(sanitized);
+
+  assert.deepEqual(context.currentFiles, {
+    "src/main.tsx": "[redacted]",
+    [dotRelativePath]: "export default function Preview() { return null; }",
+    [parentRelativePath]: "export const button = true;",
+  });
+  assert.doesNotMatch(serialized, /C:\\Users\\reviewer\\private-project\\App\.tsx/);
+  assert.doesNotMatch(serialized, /\/Users\/reviewer\/private-project\/src\/styles\.css/);
+  assert.doesNotMatch(serialized, /\\Users\\reviewer\\private-project\\Rooted\.tsx/);
+  assert.doesNotMatch(serialized, /\/\/server\/share\/private-project\/Share\.tsx/);
+  assert.doesNotMatch(serialized, /\/Users\/reviewer\/private-project\/config\.json/);
+});
