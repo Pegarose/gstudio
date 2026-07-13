@@ -476,7 +476,7 @@ git commit -m "feat: add one targeted generation repair"
 - Consumes: local Next.js server and fixture routes.
 - Produces: repeatable responsive and screenshot release checks.
 
-- [ ] **Step 1: Write a failing E2E quality test**
+- [x] **Step 1: Write a failing E2E quality test**
 
 ```ts
 import path from "node:path";
@@ -493,7 +493,7 @@ test("passing fixture is stable at mobile and desktop", async ({ page }) => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -503,13 +503,13 @@ npm run test:e2e -- quality-gates.spec.ts
 
 Expected: FAIL because Playwright configuration and fixture route do not exist.
 
-- [ ] **Step 3: Configure stable browser projects**
+- [x] **Step 3: Configure stable browser projects**
 
 Define Chromium projects for 320, 375, 414, 768, and 1440 widths. Configure `webServer` with `npm run dev`, base URL `http://127.0.0.1:9010`, trace on first retry, and screenshot output under ignored `test-results/`.
 
 Ignore `playwright-report/**` and `test-results/**` in Git and ESLint. Mask timestamps, random IDs, and sandbox URLs with the style sheet rather than broad screenshot thresholds.
 
-- [ ] **Step 4: Run Wave 4 verification**
+- [x] **Step 4: Run Wave 4 verification**
 
 Run:
 
@@ -521,7 +521,7 @@ npx tsc --noEmit
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add playwright.config.ts tests/e2e .gitignore eslint.config.mjs
