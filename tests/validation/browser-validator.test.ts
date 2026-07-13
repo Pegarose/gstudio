@@ -34,6 +34,19 @@ before(async () => {
       return;
     }
 
+    if (fixtureName === "a11y-narrow") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html>
+        <html lang="en"><head><title>Narrow a11y fixture</title></head>
+        <body><main><button type="button">Continue</button></main>
+        <script>
+          if (window.matchMedia("(max-width: 400px)").matches) {
+            document.querySelector("button").textContent = "";
+          }
+        </script></body></html>`);
+      return;
+    }
+
     if (fixtureName === "no-focus") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(`<!doctype html>
@@ -55,6 +68,24 @@ before(async () => {
         <html lang="en"><head><title>Motion fixture</title>
         <style>@keyframes pulse { to { opacity: .5; } } main { animation: pulse 1s infinite; }</style>
         </head><body><main><button type="button">Continue</button></main></body></html>`);
+      return;
+    }
+
+    if (fixtureName === "nested-infinite-motion") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html>
+        <html lang="en"><head><title>Nested motion fixture</title>
+        <style>@keyframes pulse { to { opacity: .5; } } main > div { animation: pulse 1s infinite; }</style>
+        </head><body><main><div>Animated child</div><button type="button">Continue</button></main></body></html>`);
+      return;
+    }
+
+    if (fixtureName === "hidden-focusable") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html>
+        <html lang="en"><head><title>Hidden focus fixture</title>
+        <style>button:focus-visible { outline: 3px solid #005fcc; outline-offset: 3px; }</style>
+        </head><body><main><button type="button" hidden>Hidden menu item</button><button type="button">Continue</button></main></body></html>`);
       return;
     }
 
@@ -116,6 +147,13 @@ test("browser validator marks serious and critical axe violations as hard failur
   assert.match(report.accessibility.evidence, /https?:\/\//);
 });
 
+test("browser validator runs Axe at every viewport and retains the failed width", async () => {
+  const report = await validateBrowser({ url: `${fixtureOrigin}/a11y-narrow`, desktopWidth: 1440 });
+
+  assert.equal(report.accessibility.passed, false);
+  assert.match(report.accessibility.evidence, /320px: button-name \(critical\)/);
+});
+
 test("browser validator rejects pages with invisible keyboard focus", async () => {
   const report = await validateBrowser({ url: `${fixtureOrigin}/no-focus`, desktopWidth: 1440 });
 
@@ -128,4 +166,17 @@ test("browser validator rejects primary content that ignores reduced motion", as
 
   assert.equal(report.reducedMotion.passed, false);
   assert.match(report.reducedMotion.evidence, /infinite/i);
+});
+
+test("browser validator finds infinite animation within the primary-content subtree", async () => {
+  const report = await validateBrowser({ url: `${fixtureOrigin}/nested-infinite-motion`, desktopWidth: 1440 });
+
+  assert.equal(report.reducedMotion.passed, false);
+  assert.match(report.reducedMotion.evidence, /infinite/i);
+});
+
+test("browser validator ignores hidden elements when traversing keyboard focus", async () => {
+  const report = await validateBrowser({ url: `${fixtureOrigin}/hidden-focusable`, desktopWidth: 1440 });
+
+  assert.equal(report.keyboard.passed, true, report.keyboard.evidence);
 });

@@ -18,6 +18,7 @@ export interface BrowserResponsiveProbe {
 }
 
 export interface AxeViolationEvidence {
+  width: number;
   id: string;
   impact: string | null;
   helpUrl: string;
@@ -59,6 +60,14 @@ const FOCUSABLE_SELECTOR = [
 
 const FOCUS_BASELINE_SCRIPT = [
   "(selector) => {",
+  "  const isVisibleTabbable = (element) => {",
+  "    const style = window.getComputedStyle(element);",
+  "    return element.tabIndex >= 0",
+  "      && !element.closest('[inert]')",
+  "      && style.display !== 'none'",
+  "      && style.visibility !== 'hidden'",
+  "      && element.getClientRects().length > 0;",
+  "  };",
   "  const getAppearance = (element) => {",
   "    const style = window.getComputedStyle(element);",
   "    return {",
@@ -67,7 +76,7 @@ const FOCUS_BASELINE_SCRIPT = [
   "      border: style.borderTopWidth + ' ' + style.borderTopStyle + ' ' + style.borderTopColor,",
   "    };",
   "  };",
-  "  return Array.from(document.querySelectorAll(selector)).map((element, index) => ({",
+  "  return Array.from(document.querySelectorAll(selector)).filter(isVisibleTabbable).map((element, index) => ({",
   "    index,",
   "    appearance: getAppearance(element),",
   "  }));",
@@ -76,6 +85,14 @@ const FOCUS_BASELINE_SCRIPT = [
 
 const CURRENT_FOCUS_SCRIPT = [
   "({ selector, baselines: expectedBaselines }) => {",
+  "  const isVisibleTabbable = (element) => {",
+  "    const style = window.getComputedStyle(element);",
+  "    return element.tabIndex >= 0",
+  "      && !element.closest('[inert]')",
+  "      && style.display !== 'none'",
+  "      && style.visibility !== 'hidden'",
+  "      && element.getClientRects().length > 0;",
+  "  };",
   "  const getAppearance = (element) => {",
   "    const style = window.getComputedStyle(element);",
   "    return {",
@@ -84,7 +101,7 @@ const CURRENT_FOCUS_SCRIPT = [
   "      border: style.borderTopWidth + ' ' + style.borderTopStyle + ' ' + style.borderTopColor,",
   "    };",
   "  };",
-  "  const elements = Array.from(document.querySelectorAll(selector));",
+  "  const elements = Array.from(document.querySelectorAll(selector)).filter(isVisibleTabbable);",
   "  const activeIndex = elements.indexOf(document.activeElement);",
   "  if (activeIndex < 0) return null;",
   "  return {",
@@ -100,7 +117,12 @@ const PRIMARY_ANIMATION_SCRIPT = [
   "() => {",
   "  const primaryElements = Array.from(document.querySelectorAll(\"[data-primary-content], main, [role='main'], #root\"));",
   "  const elements = primaryElements.length > 0 ? primaryElements : [document.body];",
-  "  return elements.flatMap((element) => {",
+  "  const inspectedElements = new Set();",
+  "  elements.forEach((element) => {",
+  "    inspectedElements.add(element);",
+  "    element.querySelectorAll('*').forEach((child) => inspectedElements.add(child));",
+  "  });",
+  "  return Array.from(inspectedElements).flatMap((element) => {",
   "    const style = window.getComputedStyle(element);",
   "    const animationNames = style.animationName.split(',').map((value) => value.trim());",
   "    const animationIterations = style.animationIterationCount.split(',').map((value) => value.trim());",
@@ -141,7 +163,7 @@ function formatAxeEvidence(violations: AxeViolationEvidence[]): string {
   return violations
     .map((violation) => {
       const targets = violation.targets.join(", ") || "document";
-      return violation.id + " (" + (violation.impact ?? "unknown") + ") at " + targets + "; " + violation.helpUrl;
+      return violation.width + "px: " + violation.id + " (" + (violation.impact ?? "unknown") + ") at " + targets + "; " + violation.helpUrl;
     })
     .join("\n");
 }
@@ -206,6 +228,22 @@ async function collectInfinitePrimaryAnimations(page: Page): Promise<string[]> {
   return page.evaluate(createPageExpression<string[]>(PRIMARY_ANIMATION_SCRIPT));
 }
 
+async function collectAxeViolations(page: Page, width: number): Promise<AxeViolationEvidence[]> {
+  const axe = await new AxeBuilder({ page }).analyze();
+
+  return axe.violations
+    .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+    .map((violation) => ({
+      width,
+      id: violation.id,
+      impact: violation.impact ?? null,
+      helpUrl: violation.helpUrl,
+      targets: violation.nodes.flatMap((node) => node.target.map((target) => (
+        Array.isArray(target) ? target.join(" ") : String(target)
+      ))),
+    }));
+}
+
 async function inspectViewport(page: Page, url: string, width: number): Promise<BrowserResponsiveProbe> {
   await page.setViewportSize({ width, height: viewportHeight(width) });
   await page.goto(url, { waitUntil: "networkidle" });
@@ -247,22 +285,12 @@ export async function runPlaywrightBrowserScript(input: BrowserScriptInput): Pro
       await page.emulateMedia({ reducedMotion: "reduce" });
       const widths = [...REQUIRED_VIEWPORT_WIDTHS, input.desktopWidth];
       const responsive: BrowserResponsiveProbe[] = [];
+      const axeViolations: AxeViolationEvidence[] = [];
 
       for (const width of widths) {
         responsive.push(await inspectViewport(page, input.url, width));
+        axeViolations.push(...await collectAxeViolations(page, width));
       }
-
-      const axe = await new AxeBuilder({ page }).analyze();
-      const axeViolations = axe.violations
-        .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-        .map((violation) => ({
-          id: violation.id,
-          impact: violation.impact ?? null,
-          helpUrl: violation.helpUrl,
-          targets: violation.nodes.flatMap((node) => node.target.map((target) => (
-            Array.isArray(target) ? target.join(" ") : String(target)
-          ))),
-        }));
 
       return { runtimeErrors, responsive, axeViolations };
     } finally {
