@@ -1,8 +1,7 @@
-import path from "node:path";
-
 import { expect, test } from "@playwright/test";
 
 import { expectNoHorizontalDocumentOverflow } from "./fixtures";
+import { releaseScreenshotOptions } from "./screenshot-options";
 
 test("passing fixture is stable at mobile and desktop", async ({ page }) => {
   const response = await page.goto("/test-fixtures/passing");
@@ -16,10 +15,5 @@ test("passing fixture is stable at mobile and desktop", async ({ page }) => {
   });
   expect(isNextDevIndicatorVisible).toBe(false);
   await expectNoHorizontalDocumentOverflow(page);
-  await expect(page).toHaveScreenshot("passing.png", {
-    fullPage: true,
-    animations: "disabled",
-    stylePath: path.resolve("tests/e2e/screenshot-mask.css"),
-    maxDiffPixelRatio: 0.01,
-  });
+  await expect(page).toHaveScreenshot("passing.png", releaseScreenshotOptions);
 });

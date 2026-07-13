@@ -1,6 +1,13 @@
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
-export default function PassingQualityFixture() {
+type PassingQualityFixtureProps = {
+  searchParams: Promise<{ variant?: string | string[] }>;
+};
+
+export default async function PassingQualityFixture({ searchParams }: PassingQualityFixtureProps) {
+  const { variant } = await searchParams;
+  const renderOnePixelDifference = variant === "one-pixel-diff";
+
   return (
     <main className="qualityFixture" data-quality-fixture="passing">
       <style>{`
@@ -138,6 +145,17 @@ export default function PassingQualityFixture() {
           overflow-wrap: anywhere;
         }
 
+        .qualityFixtureOnePixelDifference {
+          position: fixed;
+          inset-block-start: 0;
+          inset-inline-start: 0;
+          z-index: 1;
+          display: block;
+          inline-size: 1px;
+          block-size: 1px;
+          pointer-events: none;
+        }
+
         @media (max-width: 48rem) {
           .qualityFixtureIntro { grid-template-columns: minmax(0, 1fr); }
           .qualityFixtureTitle { max-inline-size: 12ch; }
@@ -191,6 +209,18 @@ export default function PassingQualityFixture() {
           </span>
         </footer>
       </div>
+      {renderOnePixelDifference ? (
+        <svg
+          aria-hidden="true"
+          className="qualityFixtureOnePixelDifference"
+          focusable="false"
+          height="1"
+          viewBox="0 0 1 1"
+          width="1"
+        >
+          <rect fill="#1c1b1a" height="1" width="1" />
+        </svg>
+      ) : null}
     </main>
   );
 }
