@@ -101,6 +101,8 @@ git commit -m "feat: snapshot sandbox files for validation rollback"
 
 ### Task 2: Add live activation orchestration and production validation adapters
 
+**Completed:** `81079f3`, `4f1421d`, `6710de3`, and `b9a052b` — activation rollback, durable evidence, and failure-class reviews passed after focused 24/24 tests and TypeScript verification.
+
 **Files:**
 - Create: `lib/generation/live/live-validation-activation.ts`
 - Create: `lib/generation/live/production-validation.ts`
@@ -209,6 +211,7 @@ git commit -m "feat: activate live deterministic generation validation"
 - Modify: `app/api/apply-ai-code-stream/route.ts`
 - Modify: `app/api/generate-ai-code-stream/route.ts`
 - Modify: `app/generation/page.tsx`
+- Modify: `tests/generation-builder-ui.test.cjs`
 - Create: `tests/integration/live-apply-route.test.ts`
 - Modify: `tests/brand-guidelines.test.cjs`
 
@@ -249,6 +252,8 @@ At the apply route boundary, Zod-parse `generationContext`; create the generatio
 At the generation stream, rename its post-TR4 payload event from `complete` to `candidate-ready`. Preserve raw streaming, validation progress, and existing `GenerationQualityError` behavior.
 
 At the builder, carry the original user request, active project ID, mode, and target URL into `applyGeneratedCode`. Handle `candidate-ready` as code available for application, and set `Generation complete!` only after the apply stream emits `complete`. On an apply `error`, show the report summary, keep the preview on the previous sandbox version, and do not add a success chat message.
+
+Use `components/generation/GenerationProgressSurface.tsx` while candidate generation, application, or live validation is active. Map only existing builder state (`loadingStage`, capture/preparation flags, `generationProgress`, `codeApplicationState`, and apply events) into its six phases. The surface replaces the current empty/skeleton workspace only during active work; it is removed on terminal apply completion or error. It remains presentational and must not create sandbox, generation, or validation state. Add static builder coverage proving that the surface is rendered and that `candidate-ready`, `validation-report`, and terminal apply `complete` remain distinct.
 
 - [ ] **Step 4: Run focused tests and legacy stream tests**
 

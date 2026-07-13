@@ -30,7 +30,7 @@
 - Produces `GenerationProgressPhase` and `GenerationProgressSurface`.
 - Consumes only `phase`, `status`, optional `detail`, and optional `targetLabel` from its parent.
 
-- [ ] **Step 1: Write the failing component tests**
+- [x] **Step 1: Write the failing component tests**
 
 ```tsx
 import assert from "node:assert/strict";
@@ -67,13 +67,13 @@ test("exposes all phases and maps verify to the terminal rail position", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `npx tsx --test tests/unit/generation-progress-surface.test.tsx`
 
 Expected: FAIL because `GenerationProgressSurface` does not exist.
 
-- [ ] **Step 3: Implement the minimal surface**
+- [x] **Step 3: Implement the minimal surface**
 
 ```tsx
 export type GenerationProgressPhase =
@@ -98,7 +98,7 @@ export function GenerationProgressSurface({
 
 Use existing Tailwind semantic color utilities. Use a single `motion-reduce:animate-none` treatment for the CSS-only mark and active rail. Keep every visible copy string in the component's stage array or props; no API or state hooks are permitted.
 
-- [ ] **Step 4: Run focused verification and TypeScript**
+- [x] **Step 4: Run focused verification and TypeScript**
 
 Run:
 
@@ -110,12 +110,14 @@ git diff --check
 
 Expected: both checks pass and the diff is clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add components/generation/GenerationProgressSurface.tsx tests/unit/generation-progress-surface.test.tsx
 git commit -m "feat: add generation progress surface"
 ```
+
+**Completed:** `96c0a21 feat: add generation progress surface` — focused component tests (2/2), TypeScript, and task review passed.
 
 ---
 
