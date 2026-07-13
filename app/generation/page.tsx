@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import Image from 'next/image';
 import { appConfig } from '@/config/app.config';
 import HeroInput from '@/components/HeroInput';
-import SidebarInput from '@/components/app/generation/SidebarInput';
 import HeaderBrandKit from '@/components/shared/header/BrandKit/BrandKit';
 import { HeaderProvider } from '@/components/shared/header/HeaderContext';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -26,6 +25,8 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import { resolveGenerationIntent } from '@/lib/generation-intent.js';
+import styles from './builder.module.css';
 
 interface SandboxData {
   sandboxId: string;
@@ -68,13 +69,7 @@ function AISandboxPage() {
   const [responseArea, setResponseArea] = useState<string[]>([]);
   const [structureContent, setStructureContent] = useState('No sandbox created yet');
   const [promptInput, setPromptInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      content: 'Welcome! I can help you generate code with full context of your sandbox files and structure. Just start chatting - I\'ll automatically create a sandbox for you if needed!\n\nTip: If you see package errors like "react-router-dom not found", just type "npm install" or "check packages" to automatically install missing packages.',
-      type: 'system',
-      timestamp: new Date()
-    }
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiEnabled] = useState(true);
   const searchParams = useSearchParams();
@@ -192,8 +187,6 @@ function AISandboxPage() {
     lastProcessedPosition: 0
   });
 
-  // Store flag to trigger generation after component mounts
-  const [shouldAutoGenerate, setShouldAutoGenerate] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
 
   // Clear old conversation data on component mount and create/restore sandbox
@@ -218,6 +211,7 @@ function AISandboxPage() {
       const storedCoderModel = sessionStorage.getItem('selectedCoderModel');
       const storedQaModel = sessionStorage.getItem('selectedQaModel');
       const storedInstructions = sessionStorage.getItem('additionalInstructions');
+      const storedGenerationIntent = sessionStorage.getItem('generationIntent');
       
       if (storedUrl) {
         // Mark that we have an initial submission since we're loading with a URL
@@ -286,7 +280,7 @@ function AISandboxPage() {
         // Add details to context if provided
         if (detailsParam) {
           setHomeContextInput(detailsParam);
-        } else if (storedStyle && !urlParam) {
+        } else if (storedGenerationIntent !== 'inspire' && storedStyle && !urlParam) {
           // Only apply stored style if no screenshot URL is provided
           // This prevents unwanted style inheritance when using screenshot search
           const styleNames: Record<string, string> = {
@@ -333,10 +327,7 @@ function AISandboxPage() {
         setHomeScreenFading(false);
         
         if (!storedProjectId) {
-          // Set flag to auto-trigger generation after component updates
-          setShouldAutoGenerate(true);
-          
-          // Also set autoStart flag for the effect
+          // Trigger exactly one generation after component state is ready.
           sessionStorage.setItem('autoStart', 'true');
         } else {
           // Resuming an existing project - do not trigger new generation
@@ -522,23 +513,6 @@ function AISandboxPage() {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
     }
   }, [chatMessages]);
-
-  // Auto-trigger generation when flag is set (from home page navigation)
-  useEffect(() => {
-    if (shouldAutoGenerate && homeUrlInput && !showHomeScreen) {
-      // Reset the flag
-      setShouldAutoGenerate(false);
-      
-      // Trigger generation after a short delay to ensure everything is set up
-      const timer = setTimeout(() => {
-        console.log('[generation] Auto-triggering generation from URL params');
-        startGeneration();
-      }, 1000);
-      
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldAutoGenerate, homeUrlInput, showHomeScreen]);
 
   const updateStatus = (text: string, active: boolean) => {
     setStatus({ text, active });
@@ -1493,7 +1467,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //     await applyGeneratedCode(code, isEdit);
 //   };
 
+  const hasProjectPreview = generationProgress.files.length > 0 || conversationContext.appliedCode.length > 0;
+
   const renderMainContent = () => {
+
     if (activeTab === 'generation' && (generationProgress.isGenerating || generationProgress.files.length > 0)) {
       return (
         /* Generation Tab Content */
@@ -1942,6 +1919,25 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         );
       }
       
+      if (!hasProjectPreview && !generationProgress.isGenerating) {
+        return (
+          <div className={styles.emptyPreview}>
+            <div className={styles.emptyPreviewContent}>
+              <span className={styles.emptyPreviewEyebrow}>Live canvas</span>
+              <h2>Your product takes shape here.</h2>
+              <p>Describe the first useful flow in chat. G Studio will build it, preview it, and keep each revision in context.</p>
+              <div className={styles.emptyPreviewFlow} aria-label="Builder workflow">
+                <span>Describe</span>
+                <span aria-hidden="true">→</span>
+                <span>Build</span>
+                <span aria-hidden="true">→</span>
+                <span>Refine</span>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       // Show sandbox iframe - keep showing during edits, only hide during initial loading
       if (sandboxData?.url) {
         return (
@@ -3089,13 +3085,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     // Remove protocol for cleaner display
     const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
 
-    // Check if we're in brand extension mode
-    const brandExtensionMode = sessionStorage.getItem('brandExtensionMode') === 'true';
+    const storedIntent = sessionStorage.getItem('generationIntent') || undefined;
+    const generationIntent = resolveGenerationIntent({
+      explicitIntent: storedIntent,
+      instructions: homeContextInput,
+      url: homeUrlInput
+    });
+    const isInspirationMode = generationIntent === 'inspire';
+    sessionStorage.removeItem('generationIntent');
 
     addChatMessage(
-      brandExtensionMode
-        ? `Analyzing brand from ${cleanUrl}...`
-        : `Starting to clone ${cleanUrl}...`,
+      generationIntent === 'scratch'
+        ? 'Starting a new project from scratch...'
+        : isInspirationMode
+          ? `Analyzing ${cleanUrl} for visual direction...`
+          : `Starting a faithful recreation of ${cleanUrl}...`,
       'system'
     );
     
@@ -3135,17 +3139,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           url = 'https://' + url;
         }
 
-        // Check if we're in brand extension mode
-        const brandExtensionMode = sessionStorage.getItem('brandExtensionMode') === 'true';
-        const brandExtensionPrompt = sessionStorage.getItem('brandExtensionPrompt') || '';
+        const inspirationPrompt = homeContextInput.trim();
 
         // Screenshot is already being captured in parallel above
 
         let scrapeData: ScrapeData | undefined;
         let brandGuidelines: any;
 
-        if (brandExtensionMode) {
-          // === BRAND EXTENSION MODE ===
+        if (isInspirationMode) {
+          // === INSPIRATION / BRAND EXTENSION MODE ===
           addChatMessage('Extracting brand styles from the website...', 'system');
 
           // Call the brand extraction endpoint
@@ -3154,7 +3156,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               url,
-              prompt: brandExtensionPrompt
+              prompt: inspirationPrompt
             })
           });
 
@@ -3174,10 +3176,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             sourceUrl: cleanUrl
           });
           addChatMessage(`Building your custom component using these brand guidelines...`, 'system');
-
-          // Clear the flags after use
-          sessionStorage.removeItem('brandExtensionMode');
-          sessionStorage.removeItem('brandExtensionPrompt');
 
         } else if (url.startsWith('scratch://')) {
           // === BUILD FROM SCRATCH MODE ===
@@ -3222,7 +3220,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           }
         }
 
-        setUrlStatus(brandExtensionMode ? ['Brand styles extracted!', 'Building your component...'] : ['Website scraped successfully!', 'Generating React app...']);
+        setUrlStatus(isInspirationMode ? ['Visual system extracted!', 'Building an original application...'] : ['Website scraped successfully!', 'Generating React app...']);
 
         // Clear preparing design state and switch to generation tab
         setIsPreparingDesign(false);
@@ -3242,7 +3240,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         // Build the appropriate prompt based on mode
         let prompt;
 
-        if (brandExtensionMode && brandGuidelines) {
+        if (isInspirationMode && brandGuidelines) {
           // === BRAND EXTENSION PROMPT ===
           // Store brand guidelines in conversation context
           setConversationContext(prev => ({
@@ -3323,7 +3321,7 @@ ${JSON.stringify(branding, null, 2)}
 </branding-format>
 
 USER'S REQUEST:
-${brandExtensionPrompt || 'Build a modern web component using these brand guidelines'}
+${inspirationPrompt || 'Build an original, premium application using these brand guidelines'}
 
 IMPORTANT: The content above in the <branding-format> tags contains the extracted brand guidelines from ${url}.
 Use these guidelines (colors, fonts, spacing, design patterns) to build what the user requested.
@@ -3331,7 +3329,8 @@ Use these guidelines (colors, fonts, spacing, design patterns) to build what the
 CRITICAL REQUIREMENTS:
 - DO NOT recreate the original website at ${url}
 - DO create a COMPLETELY NEW component that fulfills the user's request
-- The user wants: "${brandExtensionPrompt}"
+- The user wants: "${inspirationPrompt}"
+- DO NOT invent analytics, reach, sentiment, percentages, or performance metrics. Use qualitative labels or clearly marked unavailable states unless the user supplied real data.
 - Build ONLY what the user requested - nothing more
 - App.jsx should render ONLY the requested component - no extra Header/Footer/Hero unless specifically requested
 - Make it a minimal, focused implementation of the user's request
@@ -3496,6 +3495,7 @@ Focus on the key sections and content, making it clean and modern.`;
             planningModel,
             coderModel,
             qaModel,
+            generationIntent,
             context: {
               sandboxId: sandboxData?.sandboxId,
               structure: structureContent,
@@ -3689,8 +3689,8 @@ Focus on the key sections and content, making it clean and modern.`;
           // Apply the code (first time is not edit mode)
           await applyGeneratedCode(generatedCode, false);
 
-          const successContent = brandExtensionMode
-            ? `Successfully built your custom component using ${cleanUrl}'s brand guidelines! You can now ask me to modify it or add more features.`
+          const successContent = isInspirationMode
+            ? `Built an original application using visual direction extracted from ${cleanUrl}. You can now refine the layout, content, or interactions.`
             : `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`;
 
           setChatMessages(prev => {
@@ -3704,7 +3704,7 @@ Focus on the key sections and content, making it clean and modern.`;
                   metadata: {
                     ...newMessages[i].metadata,
                     scrapedUrl: url,
-                    scrapedContent: brandExtensionMode ? { brandGuidelines } : scrapeData,
+                    scrapedContent: isInspirationMode ? { brandGuidelines } : scrapeData,
                     generatedCode: generatedCode
                   }
                 };
@@ -3773,8 +3773,8 @@ Focus on the key sections and content, making it clean and modern.`;
 
   return (
     <HeaderProvider>
-      <div className="font-sans bg-[#fafafa] dark:bg-neutral-950 text-foreground h-screen flex flex-col">
-      <div className="bg-white/90 dark:bg-neutral-900/90 backdrop-blur-md px-16 py-10 border-b border-neutral-200/60 dark:border-neutral-800/80 flex items-center justify-between shadow-sm z-30">
+      <div data-testid="generation-workspace" className={`${styles.workspace} font-sans dark:bg-neutral-950 text-foreground h-screen flex flex-col`}>
+      <div className={`${styles.topbar} backdrop-blur-md px-16 py-10 border-b flex items-center justify-between shadow-sm z-30`}>
         <div className="flex items-center gap-12">
           <button 
             type="button"
@@ -3791,7 +3791,8 @@ Focus on the key sections and content, making it clean and modern.`;
             <button
               type="button"
               onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-              className="flex items-center gap-6 text-xs font-bold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 px-10 py-6 rounded-lg transition-all border border-neutral-200/40 dark:border-neutral-800/40 shadow-sm"
+              aria-label="Open project actions"
+              className={`${styles.projectSwitcher} flex items-center gap-6 text-xs font-bold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 px-10 py-6 rounded-lg transition-all border border-neutral-200/40 dark:border-neutral-800/40 shadow-sm`}
             >
               <span>{sessionStorage.getItem('projectName') || 'Active Project'}</span>
               <svg className="w-3.5 h-3.5 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -3930,15 +3931,13 @@ Focus on the key sections and content, making it clean and modern.`;
           <button
             type="button"
             onClick={() => setShowTeamModal(true)}
-            className="flex items-center gap-6 px-12 py-6 bg-gradient-to-r from-orange-500/10 to-amber-500/10 hover:from-orange-500/20 hover:to-amber-500/20 border border-orange-200/50 dark:border-orange-900/30 text-orange-700 dark:text-orange-303 rounded-full hover:bg-orange-100/50 transition-all font-bold shadow-sm text-[11px]"
+            className={styles.agentButton}
             title="Configure AI agent models & settings"
           >
             <svg className="w-4 h-4 text-orange-550" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            <span>
-              AI Team: {appConfig.ai.modelDisplayNames?.[planningModel] ? appConfig.ai.modelDisplayNames[planningModel].split(' ')[0] : 'Plan'} • {appConfig.ai.modelDisplayNames?.[coderModel] ? appConfig.ai.modelDisplayNames[coderModel].split(' ')[0] : 'Code'} • {appConfig.ai.modelDisplayNames?.[qaModel] ? appConfig.ai.modelDisplayNames[qaModel].split(' ')[0] : 'QA'}
-            </span>
+            <span>AI team</span>
           </button>
           
           <button 
@@ -3974,36 +3973,9 @@ Focus on the key sections and content, making it clean and modern.`;
       </div>
       
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className={`${styles.workspaceBody} flex-1 flex overflow-hidden`}>
         {/* Left Panel - AI Chat & Visual Editor */}
-        <div className="w-[400px] min-w-[400px] flex flex-col border-r border-neutral-200/60 dark:border-neutral-800/80 bg-white dark:bg-neutral-900/40 backdrop-blur-md">
-          {/* Sidebar Input Component */}
-          {!hasInitialSubmission ? (
-            <div className="p-16 border-b border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/20">
-              <SidebarInput
-                onSubmit={(url, style, model, instructions) => {
-                  // Mark that we've had an initial submission
-                  setHasInitialSubmission(true);
-                  
-                  // Store the configuration in sessionStorage (same as home page)
-                  sessionStorage.setItem('targetUrl', url);
-                  sessionStorage.setItem('selectedStyle', style);
-                  sessionStorage.setItem('selectedModel', model);
-                  if (instructions) {
-                    sessionStorage.setItem('additionalInstructions', instructions);
-                  }
-                  sessionStorage.setItem('autoStart', 'true');
-                  
-                  // Start generation using the existing logic
-                  setHomeUrlInput(url);
-                  setHomeContextInput(instructions || '');
-                  startGeneration();
-                }}
-                disabled={loading || generationProgress.isGenerating}
-              />
-            </div>
-          ) : null}
-
+        <div className={`${styles.sidebar} ${styles.chatShell} flex flex-col border-r`}>
           {conversationContext.scrapedWebsites.length > 0 && (
             <div className="p-16 bg-neutral-50/50 dark:bg-neutral-900/30 border-b border-neutral-200/50 dark:border-neutral-800/60">
               <div className="flex flex-col gap-12">
@@ -4128,8 +4100,37 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           ) : (
             <div
-              className="flex-1 overflow-y-auto p-24 flex flex-col gap-20 scrollbar-hide bg-[#fafafa] dark:bg-neutral-950"
+              className={`${styles.conversation} flex-1 overflow-y-auto p-24 flex flex-col gap-20 scrollbar-hide dark:bg-neutral-950`}
               ref={chatMessagesRef}>
+            {chatMessages.length === 0 && (
+              <div className={styles.emptyThread}>
+                <div className={styles.emptyThreadHeading}>
+                  <div className={styles.emptyThreadMark} aria-hidden="true">G</div>
+                  <div>
+                    <span className={styles.emptyThreadAuthor}>G Studio</span>
+                    <h2>What should we build?</h2>
+                  </div>
+                </div>
+                <p>Give me the product, audience, and first useful flow. I’ll keep the conversation and live preview in sync.</p>
+                <div className={styles.starterPrompts}>
+                  {[
+                    'Build a focused product landing page',
+                    'Create an operations dashboard workflow',
+                    'Recreate a public website from its URL'
+                  ].map(prompt => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      className={styles.starterPrompt}
+                      onClick={() => setAiChatInput(prompt)}
+                    >
+                      <span>{prompt}</span>
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {chatMessages.map((msg, idx) => {
               // Check if this message is from a successful generation
               const isGenerationComplete = msg.content.includes('Successfully recreated') || 
@@ -4140,27 +4141,28 @@ Focus on the key sections and content, making it clean and modern.`;
               // const completedFiles = msg.metadata?.appliedFiles || [];
               
               return (
-                <div key={idx} className="block w-full animate-fade-in-up">
-                  <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'} w-full`}>
-                    <div className={`flex items-start gap-10 w-full ${msg.type === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div key={idx} className={`${styles.messageRow} animate-fade-in-up`}>
+                  <div className={`${styles.messageAlignment} ${msg.type === 'user' ? styles.messageAlignmentUser : ''}`}>
+                    <div className={styles.messageLine}>
                       {msg.type === 'user' ? (
-                        <div className="w-24 h-24 rounded-full bg-neutral-200 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 flex items-center justify-center text-[10px] font-bold text-neutral-700 dark:text-neutral-305 flex-shrink-0 shadow-sm select-none">
+                        <div className={styles.messageAvatar}>
                           U
                         </div>
                       ) : msg.type === 'ai' ? (
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-[9px] font-black text-white flex-shrink-0 shadow-md select-none">
+                        <div className={styles.messageAvatar}>
                           G
                         </div>
                       ) : null}
 
-                      <div className={`block ${
-                        msg.type === 'user' ? 'bg-neutral-900 dark:bg-neutral-850 text-white ml-auto max-w-[85%] rounded-2xl rounded-tr-none px-14 py-8 shadow-sm text-xs font-sans leading-relaxed' :
-                        msg.type === 'ai' ? 'bg-transparent text-neutral-850 dark:text-neutral-100 mr-auto w-full text-xs leading-relaxed font-sans py-4' :
-                        msg.type === 'system' ? 'bg-white dark:bg-neutral-900 border border-neutral-200/50 dark:border-neutral-800 rounded-2xl px-12 py-8 text-neutral-600 dark:text-neutral-350 text-[11px] shadow-sm flex items-center gap-8' :
-                        msg.type === 'command' ? 'bg-neutral-900 text-neutral-200 font-mono text-[11px] rounded-xl px-12 py-8 w-full border border-neutral-850' :
-                        msg.type === 'error' ? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 text-xs border border-red-200 dark:border-red-900/50 rounded-xl px-12 py-8' :
-                        'bg-white dark:bg-neutral-900 border border-neutral-200 rounded-xl px-12 py-8 text-xs'
+                      <div className={`${styles.messageBody} ${
+                        msg.type === 'user' ? styles.userMessage :
+                        msg.type === 'ai' ? styles.aiMessage :
+                        msg.type === 'system' ? styles.systemMessage :
+                        msg.type === 'command' ? styles.commandMessage :
+                        msg.type === 'error' ? styles.errorMessage :
+                        styles.aiMessage
                       }`}>
+                    {msg.type === 'ai' && <span className={styles.messageAuthor}>G Studio</span>}
                     {msg.type === 'command' ? (
                        <div className="flex items-start gap-8">
                          <span className={`text-xs ${
@@ -4553,118 +4555,8 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           )}
 
-          {/* SEO Auditor Card */}
-          {activeTab === 'preview' && sandboxData?.url && (
-            <div className="mx-16 my-8 p-16 bg-white border border-gray-200 rounded-16 shadow-sm space-y-12">
-              <div className="flex justify-between items-center">
-                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Review your SEO</span>
-                {seoResult && (
-                  <span className={`text-[10px] font-extrabold px-12 py-4 rounded-full ${
-                    seoResult.score >= 80 ? 'bg-green-50 text-green-700' :
-                    seoResult.score >= 50 ? 'bg-yellow-50 text-yellow-700 font-semibold' :
-                    'bg-red-50 text-red-700'
-                  }`}>
-                    Score: {seoResult.score}/100
-                  </span>
-                )}
-              </div>
-              
-              {seoResult ? (
-                <div className="space-y-8 text-[10px] text-gray-600">
-                  <div className="flex items-center gap-8">
-                    <span className={seoResult.title ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
-                      {seoResult.title ? "✓" : "✗"}
-                    </span>
-                    <span>Title tag: {seoResult.title ? `"${seoResult.title}"` : "Missing!"}</span>
-                  </div>
-                  <div className="flex items-center gap-8">
-                    <span className={seoResult.metaDesc ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
-                      {seoResult.metaDesc ? "✓" : "✗"}
-                    </span>
-                    <span>Meta Description: {seoResult.metaDesc ? "Exists" : "Missing!"}</span>
-                  </div>
-                  <div className="flex items-center gap-8">
-                    <span className={seoResult.viewport ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
-                      {seoResult.viewport ? "✓" : "✗"}
-                    </span>
-                    <span>Viewport (Mobile ready): {seoResult.viewport ? "Yes" : "Missing!"}</span>
-                  </div>
-                  <div className="flex items-center gap-8">
-                    <span className={seoResult.h1Count === 1 ? "text-green-500 font-bold" : "text-yellow-500 font-bold"}>
-                      {seoResult.h1Count === 1 ? "✓" : "!"}
-                    </span>
-                    <span>H1 Count: {seoResult.h1Count} (Should be exactly 1)</span>
-                  </div>
-                  <div className="flex items-center gap-8">
-                    <span className={seoResult.imagesWithoutAlt === 0 ? "text-green-500 font-bold" : "text-yellow-500 font-bold"}>
-                      {seoResult.imagesWithoutAlt === 0 ? "✓" : "!"}
-                    </span>
-                    <span>Images without Alt: {seoResult.imagesWithoutAlt}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSeoAuditing(true);
-                      if (iframeRef.current && iframeRef.current.contentWindow) {
-                        iframeRef.current.contentWindow.postMessage({ type: 'RUN_SEO_AUDIT' }, '*');
-                      }
-                    }}
-                    className="w-full text-center py-8 bg-blue-50 text-blue-600 font-bold rounded-8 hover:bg-blue-100 transition-all text-[10px]"
-                  >
-                    Run Audit Again
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSeoAuditing(true);
-                    if (iframeRef.current && iframeRef.current.contentWindow) {
-                      iframeRef.current.contentWindow.postMessage({ type: 'RUN_SEO_AUDIT' }, '*');
-                    } else {
-                      setSeoAuditing(false);
-                      toast.error("Iframe preview is not loaded yet.");
-                    }
-                  }}
-                  disabled={seoAuditing}
-                  className="w-full text-center py-10 bg-blue-600 text-white font-bold rounded-12 hover:bg-blue-700 transition-all disabled:opacity-50 text-[10px] shadow-sm"
-                >
-                  {seoAuditing ? "Auditing live React DOM..." : "Review SEO"}
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="p-16 border-t border-border bg-background-base space-y-12">
-            {/* Suggestion Chips */}
-            <div className="flex gap-8 px-4 overflow-x-auto pb-4 scrollbar-hide">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowHistoryPanel(true);
-                  toast.info("Select a version from the history panel to revert.");
-                }}
-                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
-              >
-                Önceki sürüme dön
-              </button>
-              <button
-                type="button"
-                onClick={() => setAiChatInput("3 yeni tasarım dene")}
-                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
-              >
-                3 yeni tasarım dene
-              </button>
-              <button
-                type="button"
-                onClick={() => setAiChatInput("Tipografi değiştir")}
-                className="flex-shrink-0 text-[10px] font-bold px-12 py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-all border border-gray-150"
-              >
-                Tipografi değiştir
-              </button>
-            </div>
-
-            <div className="relative bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-orange-500/20 focus-within:border-orange-500 transition-all p-3">
+          <div className={styles.composerDock}>
+            <div data-testid="generation-composer" className={`${styles.composer} relative bg-white dark:bg-neutral-900 border dark:border-neutral-800 transition-all p-3`}>
               <textarea
                 value={aiChatInput}
                 onChange={(e) => {
@@ -4678,22 +4570,21 @@ Focus on the key sections and content, making it clean and modern.`;
                     sendChatMessage();
                   }
                 }}
-                placeholder={generationMode === 'build' ? "Describe what you want to build..." : "Discuss the plan before building..."}
+                placeholder={generationMode === 'build' ? "Ask G Studio..." : "Discuss the plan first..."}
                 rows={1}
                 className="w-full bg-transparent text-sm text-neutral-800 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 resize-none outline-none border-none focus:ring-0 max-h-[160px] min-h-[24px]"
                 style={{ height: 'auto', overflowY: 'auto' }}
               />
-              <div className="flex items-center justify-between mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800/80">
+              <div className={`${styles.composerFooter} flex items-center justify-between mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800/80`}>
                 <div className="flex items-center gap-8">
-                  <span className="text-[10px] font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-wider select-none">Mode:</span>
-                  <div className="inline-flex bg-neutral-100 dark:bg-neutral-800 rounded-lg p-0.5 border border-neutral-200/50 dark:border-neutral-700/50">
+                  <div className={styles.modeSwitch}>
                     <button
                       type="button"
                       onClick={() => setGenerationMode('build')}
-                      className={`px-8 py-3 rounded-md text-[10px] font-bold transition-all ${
+                      className={`${styles.modeButton} ${
                         generationMode === 'build'
-                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
-                          : 'bg-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
+                          ? styles.modeButtonActive
+                          : ''
                       }`}
                     >
                       Build
@@ -4701,24 +4592,35 @@ Focus on the key sections and content, making it clean and modern.`;
                     <button
                       type="button"
                       onClick={() => setGenerationMode('plan')}
-                      className={`px-8 py-3 rounded-md text-[10px] font-bold transition-all ${
+                      className={`${styles.modeButton} ${
                         generationMode === 'plan'
-                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
-                          : 'bg-transparent text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'
+                          ? styles.modeButtonActive
+                          : ''
                       }`}
                     >
                       Plan
                     </button>
                   </div>
+                  {hasProjectPreview && (
+                    <button
+                      type="button"
+                      className={styles.visualEditButton}
+                      onClick={() => setInspecting(!inspecting)}
+                      aria-pressed={inspecting}
+                    >
+                      Visual edits
+                    </button>
+                  )}
                 </div>
                 <button
                   type="button"
                   onClick={sendChatMessage}
                   disabled={!aiChatInput.trim()}
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                  aria-label="Send build instruction"
+                  className={`${styles.composerSubmit} flex items-center justify-center transition-all ${
                     aiChatInput.trim()
-                      ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-600/15 active:scale-95'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 cursor-not-allowed'
+                      ? styles.composerSubmitReady
+                      : styles.composerSubmitDisabled
                   }`}
                 >
                   <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -4731,20 +4633,19 @@ Focus on the key sections and content, making it clean and modern.`;
         </div>
 
         {/* Right Panel - Preview or Generation (2/3 of remaining width) */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-neutral-50 dark:bg-neutral-950">
-          <div className="px-16 py-10 bg-white dark:bg-neutral-900 border-b border-neutral-200/60 dark:border-neutral-800/80 flex justify-between items-center z-20 shadow-sm gap-12">
+        <div className={`${styles.previewPanel} flex-1 flex flex-col overflow-hidden dark:bg-neutral-950`}>
+          <div className={`${styles.previewToolbar} px-16 py-10 border-b flex justify-between items-center z-20 shadow-sm gap-12`}>
             <div className="flex items-center gap-12 flex-shrink-0">
-              {/* Traffic light control dots */}
-              <div className="flex items-center gap-6">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-400 dark:bg-red-500/70" />
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 dark:bg-yellow-500/70" />
-                <div className="w-2.5 h-2.5 rounded-full bg-green-400 dark:bg-green-500/70" />
+              <div className={styles.previewIdentity}>
+                <span className={styles.previewPulse} aria-hidden="true" />
+                <span>{activeTab === 'preview' ? hasProjectPreview ? 'Live preview' : 'Project canvas' : 'Generated files'}</span>
               </div>
 
               {/* Toggle-style Code/View switcher */}
               <div className="inline-flex bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 border border-neutral-200/50 dark:border-neutral-850">
                 <button
                   onClick={() => setActiveTab('generation')}
+                  aria-label="Switch to code"
                   className={`px-12 py-4 rounded-md transition-all text-xs font-semibold ${
                     activeTab === 'generation' 
                       ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm' 
@@ -4760,6 +4661,7 @@ Focus on the key sections and content, making it clean and modern.`;
                 </button>
                 <button
                   onClick={() => setActiveTab('preview')}
+                  aria-label="Switch to preview"
                   className={`px-12 py-4 rounded-md transition-all text-xs font-semibold ${
                     activeTab === 'preview' 
                       ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm' 
@@ -4777,22 +4679,56 @@ Focus on the key sections and content, making it clean and modern.`;
               </div>
             </div>
 
-            {/* Address Bar */}
-            {activeTab === 'preview' && (
-              <div className="flex-1 max-w-[400px] mx-auto px-12 py-5 bg-neutral-100 dark:bg-neutral-800/80 border border-neutral-200/50 dark:border-neutral-800 rounded-lg text-[10px] font-mono text-neutral-500 dark:text-neutral-400 text-center truncate flex items-center justify-center gap-6 shadow-inner select-none animate-fade-in">
-                <svg className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-                <span className="truncate">{sandboxData?.url || 'http://localhost:3000'}</span>
-              </div>
+            {/* Preview destination */}
+            {activeTab === 'preview' && hasProjectPreview && (
+              sandboxData?.url ? (
+                <a href={sandboxData.url} target="_blank" rel="noreferrer" className={styles.previewLink} title="Open live preview">
+                  {sandboxData.url}
+                </a>
+              ) : <span className={styles.previewLink}>Preview appears here after your first build</span>
             )}
 
             <div className="flex gap-8 items-center flex-shrink-0">
+              {historyLog.length > 0 && (<button
+                type="button"
+                onClick={() => setShowHistoryPanel(true)}
+                aria-label="Open version history"
+                title="Open version history"
+                className={`${styles.toolbarButton} p-6 rounded-lg transition-all text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800`}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>)}
+
+              {activeTab === 'preview' && hasProjectPreview && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInspecting(!inspecting);
+                    toast.success(!inspecting ? 'Visual edit mode enabled. Select an element in the preview.' : 'Visual edit mode disabled.');
+                  }}
+                  aria-label="Turn on visual edit mode"
+                  aria-pressed={inspecting}
+                  title={inspecting ? 'Turn off visual edit mode' : 'Turn on visual edit mode'}
+                  className={`${styles.toolbarButton} p-6 rounded-lg transition-all ${
+                    inspecting
+                      ? 'bg-orange-500 text-white shadow-sm'
+                      : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0 5 5" />
+                  </svg>
+                </button>
+              )}
+
               {/* Device Selector */}
-              {activeTab === 'preview' && (
+              {activeTab === 'preview' && hasProjectPreview && (
                 <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 border border-neutral-200/60 dark:border-neutral-850 animate-fade-in">
                   <button
                     onClick={() => setPreviewDevice('desktop')}
+                    aria-label="Desktop preview"
                     className={`p-4 rounded transition-all text-xs font-semibold ${
                       previewDevice === 'desktop'
                         ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
@@ -4804,6 +4740,7 @@ Focus on the key sections and content, making it clean and modern.`;
                   </button>
                   <button
                     onClick={() => setPreviewDevice('tablet')}
+                    aria-label="Tablet preview"
                     className={`p-4 rounded transition-all text-xs font-semibold ${
                       previewDevice === 'tablet'
                         ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
@@ -4815,6 +4752,7 @@ Focus on the key sections and content, making it clean and modern.`;
                   </button>
                   <button
                     onClick={() => setPreviewDevice('mobile')}
+                    aria-label="Mobile preview"
                     className={`p-4 rounded transition-all text-xs font-semibold ${
                       previewDevice === 'mobile'
                         ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
@@ -4843,7 +4781,7 @@ Focus on the key sections and content, making it clean and modern.`;
               )}
               
               {/* Sandbox Status Indicator */}
-              {sandboxData && (
+              {hasProjectPreview && sandboxData && (
                 <div className="inline-flex items-center gap-1.5 px-10 py-4 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 rounded-lg text-xs font-semibold text-neutral-700 dark:text-neutral-305 animate-fade-in">
                   <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                   Sandbox active
@@ -4851,7 +4789,7 @@ Focus on the key sections and content, making it clean and modern.`;
               )}
               
               {/* Open in new tab button */}
-              {sandboxData && (
+              {hasProjectPreview && sandboxData && (
                 <a 
                   href={sandboxData.url} 
                   target="_blank" 
