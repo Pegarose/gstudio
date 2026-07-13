@@ -1,49 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGroq } from '@ai-sdk/groq';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateObject } from 'ai';
 import { z } from 'zod';
+import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager';
+import { resolveModelRoute } from '@/lib/models/registry';
 // import type { FileManifest } from '@/types/file-manifest'; // Type is used implicitly through manifest parameter
-
-// Check if we're using Vercel AI Gateway
-const isUsingAIGateway = !!process.env.AI_GATEWAY_API_KEY;
-const aiGatewayBaseURL = 'https://ai-gateway.vercel.sh/v1';
-
-const groq = createGroq({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GROQ_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
-
-const anthropic = createAnthropic({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1'),
-});
-
-const openai = createOpenAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.OPENAI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : process.env.OPENAI_BASE_URL,
-});
-
-const opencodeClient = process.env.OPENCODEGO_API_KEY ? createOpenAI({
-  apiKey: process.env.OPENCODEGO_API_KEY,
-  baseURL: process.env.OPENCODEGO_API_BASE?.endsWith('/v1') || process.env.OPENCODEGO_API_BASE?.endsWith('/v1/')
-    ? process.env.OPENCODEGO_API_BASE
-    : `${process.env.OPENCODEGO_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
-const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
-  apiKey: process.env.TR4_API_KEY,
-  baseURL: process.env.TR4_API_BASE?.endsWith('/v1') || process.env.TR4_API_BASE?.endsWith('/v1/')
-    ? process.env.TR4_API_BASE
-    : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
-const googleGenerativeAI = createGoogleGenerativeAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
 
 // Schema for the AI's search plan - not file selection!
 const searchPlanSchema = z.object({
@@ -73,75 +33,12 @@ const searchPlanSchema = z.object({
   }).optional().describe('Backup search if primary fails')
 });
 
-interface CustomRouteInfo {
-  client: any;
-  name: string;
-  provider: 'opencode' | 'tr4' | 'agentrouter';
-}
-
-const tr4SharedModels = new Set([
-  'kimi-k2.5',
-  'kimi-k2-thinking',
-  'kimi-k2.7-code',
-  'kimi-k2',
-  'kimi-k2.6',
-]);
-const tr4FallbackModel = 'gpt-5.6-sol';
-
-function getModelProvider(model: string): CustomRouteInfo | null {
-  const m = model.toLowerCase();
-  
-  // TR4 Exclusive models from user screenshot
-  const tr4Exclusive = [
-    'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 'gpt-image-1.5', 'gpt-image-2',
-    'gpt-oss-120b-medium', 'gpt-5.3-codex-spark', 'gpt-5.5', 'gpt-5.6-terra', 'gpt-5.6-luna',
-    'claude-sonnet-4-6', 'claude-opus-4-6-thinking',
-    'gemini-3.1-flash-lite', 'gemini-pro-agent', 'gemini-3.5-flash-low', 'gemini-3.5-flash-extra-low',
-    'gemini-3-flash-agent', 'gemini-3.1-pro-low', 'gemini-3-flash', 'gemini-3.1-flash-image',
-    'kimi-k2.7-code-highspeed', 'codex-auto-review'
-  ];
-
-  // Opencode Exclusive models
-  const opencodeExclusive = [
-    'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'glm-5.2', 'glm-5.1', 'glm-5',
-    'deepseek-v4-pro', 'deepseek-v4-flash',
-    'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
-    'mimo-v2-pro', 'mimo-v2-omni', 'mimo-v2.5-pro', 'mimo-v2.5',
-    'hy3-preview'
-  ];
-
-  // 1. Route TR4 exclusive models
-  if (tr4Exclusive.includes(m) && process.env.TR4_API_KEY && tr4Client) {
-    return { client: tr4Client, name: model, provider: 'tr4' };
-  }
-  
-  // 2. Route Opencode exclusive models
-  if (opencodeExclusive.includes(m) && process.env.OPENCODEGO_API_KEY && opencodeClient) {
-    return { client: opencodeClient, name: model, provider: 'opencode' };
-  }
-  
-  // 3. Route shared or other models (e.g., kimi-k2.5, kimi-k2-thinking, kimi-k2.7-code, kimi-k2, kimi-k2.6)
-  // Try Opencode first; shared Kimi models may fall back to TR4.
-  if (process.env.OPENCODEGO_API_KEY && opencodeClient) {
-    return { client: opencodeClient, name: model, provider: 'opencode' };
-  }
-  
-  // Try TR4 next
-  if (process.env.TR4_API_KEY && tr4Client) {
-    return { client: tr4Client, name: model, provider: 'tr4' };
-  }
-
-  return null;
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, manifest, model = 'openai/gpt-oss-20b' } = await request.json();
+    const { prompt, manifest } = await request.json();
     
     console.log('[analyze-edit-intent] Request received');
     console.log('[analyze-edit-intent] Prompt:', prompt);
-    console.log('[analyze-edit-intent] Model:', model);
     console.log('[analyze-edit-intent] Manifest files count:', manifest?.files ? Object.keys(manifest.files).length : 0);
     
     if (!prompt || !manifest) {
@@ -175,36 +72,16 @@ export async function POST(request: NextRequest) {
         error: 'No valid files found in manifest'
       }, { status: 400 });
     }
+
+    assertTr4Configured();
+    const intentRoute = resolveModelRoute("intent");
+    const aiModel = getLanguageModel(intentRoute);
+    console.log(`[analyze-edit-intent] Using TR4 intent model: ${intentRoute.model}`);
     
     console.log('[analyze-edit-intent] Analyzing prompt:', prompt);
     console.log('[analyze-edit-intent] File summary preview:', fileSummary.split('\n').slice(0, 5).join('\n'));
     
-    // Select the appropriate AI model based on the request
-    let aiModel: any;
-    const customRoute = getModelProvider(model);
-
-    if (customRoute) {
-      aiModel = customRoute.client.chat ? customRoute.client.chat(customRoute.name) : customRoute.client(customRoute.name);
-      console.log(`[analyze-edit-intent] Intercepting request: Using ${customRoute.provider.toUpperCase()} with model: ${customRoute.name}`);
-    } else {
-      if (model.startsWith('anthropic/')) {
-        aiModel = anthropic(model.replace('anthropic/', ''));
-      } else if (model.startsWith('openai/')) {
-        if (model.includes('gpt-oss')) {
-          aiModel = groq(model);
-        } else {
-          aiModel = openai.chat ? openai.chat(model.replace('openai/', '')) : openai(model.replace('openai/', ''));
-        }
-      } else if (model.startsWith('google/')) {
-        aiModel = googleGenerativeAI(model.replace('google/', ''));
-      } else {
-        aiModel = groq(model);
-      }
-      console.log('[analyze-edit-intent] Using standard model:', model);
-    }
-    
     // Use AI to create a search plan
-    let result;
     const messages = [
       {
         role: 'system' as const,
@@ -245,32 +122,11 @@ Create a search plan to find the exact code that needs to be modified. Include s
       }
     ];
 
-    try {
-      result = await generateObject({
-        model: aiModel,
-        schema: searchPlanSchema,
-        messages
-      });
-    } catch (generateError: any) {
-      console.error('[analyze-edit-intent] Error in generateObject:', generateError);
-      
-      // Shared Kimi models may fall back from OpenCode to the configured TR4 API.
-      if (customRoute?.provider === 'opencode' && tr4SharedModels.has(model.toLowerCase()) && process.env.TR4_API_KEY && tr4Client) {
-        console.log('[analyze-edit-intent] Opencode failed. Falling back to TR4 API with model:', tr4FallbackModel);
-        try {
-          result = await generateObject({
-            model: tr4Client.chat ? tr4Client.chat(tr4FallbackModel) : tr4Client(tr4FallbackModel),
-            schema: searchPlanSchema,
-            messages
-          });
-        } catch (tr4Error) {
-          console.error('[analyze-edit-intent] TR4 fallback also failed:', tr4Error);
-          throw generateError;
-        }
-      } else {
-        throw generateError;
-      }
-    }
+    const result = await generateObject({
+      model: aiModel,
+      schema: searchPlanSchema,
+      messages
+    });
     
     console.log('[analyze-edit-intent] Search plan created:', {
       editType: result.object.editType,

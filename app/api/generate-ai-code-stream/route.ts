@@ -1,8 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGroq } from '@ai-sdk/groq';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
 import { loadAgentContext } from '@/lib/gstudio-agent-context.js';
@@ -11,53 +7,12 @@ import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
+import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager';
+import { resolveModelRoute } from '@/lib/models/registry';
+import { resolveTeamModelRoute } from '@/lib/models/team-model-policy';
 
 // Force dynamic route to enable streaming
 export const dynamic = 'force-dynamic';
-
-// Check if we're using Vercel AI Gateway
-const isUsingAIGateway = !!process.env.AI_GATEWAY_API_KEY;
-const aiGatewayBaseURL = 'https://ai-gateway.vercel.sh/v1';
-
-console.log('[generate-ai-code-stream] AI Gateway config:', {
-  isUsingAIGateway,
-  hasGroqKey: !!process.env.GROQ_API_KEY,
-  hasAIGatewayKey: !!process.env.AI_GATEWAY_API_KEY
-});
-
-const groq = createGroq({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GROQ_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
-
-const anthropic = createAnthropic({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1'),
-});
-
-const googleGenerativeAI = createGoogleGenerativeAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
-
-const openai = createOpenAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.OPENAI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : process.env.OPENAI_BASE_URL,
-});
-
-const opencodeClient = process.env.OPENCODEGO_API_KEY ? createOpenAI({
-  apiKey: process.env.OPENCODEGO_API_KEY,
-  baseURL: process.env.OPENCODEGO_API_BASE?.endsWith('/v1') || process.env.OPENCODEGO_API_BASE?.endsWith('/v1/')
-    ? process.env.OPENCODEGO_API_BASE
-    : `${process.env.OPENCODEGO_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
-const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
-  apiKey: process.env.TR4_API_KEY,
-  baseURL: process.env.TR4_API_BASE?.endsWith('/v1') || process.env.TR4_API_BASE?.endsWith('/v1/')
-    ? process.env.TR4_API_BASE
-    : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
 
 // Helper function to analyze user preferences from conversation history
 function analyzeUserPreferences(messages: ConversationMessage[]): {
@@ -103,53 +58,9 @@ declare global {
   var conversationState: ConversationState | null;
 }
 
-interface CustomRouteInfo {
-  client: any;
-  name: string;
-  provider: 'opencode' | 'tr4' | 'agentrouter';
-}
-
-const tr4SharedModels = new Set([
-  'kimi-k2.5',
-  'kimi-k2-thinking',
-  'kimi-k2.7-code',
-  'kimi-k2',
-  'kimi-k2.6',
-]);
-const tr4FallbackModel = 'gpt-5.6-sol';
-
-function getModelProvider(model: string): CustomRouteInfo | null {
-  const m = model.toLowerCase();
-  
-  // TR4 Exclusive models from user screenshot
-  const tr4Exclusive = [
-    'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 
-    'gpt-image-1.5', 'gpt-image-2', 'gpt-oss-120b-medium', 'gpt-5.3-codex-spark', 'gpt-5.5',
-    'claude-opus-4-6-thinking', 'claude-sonnet-4-6',
-    'gemini-3-flash', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite', 'gemini-pro-agent', 
-    'gemini-3.5-flash-low', 'gemini-3.5-flash-extra-low', 'gemini-3-flash-agent', 'gemini-3.1-pro-low'
-  ];
-
-  // 1. Route TR4 models
-  if (tr4Exclusive.includes(m) && process.env.TR4_API_KEY && tr4Client) {
-    return { client: tr4Client, name: model, provider: 'tr4' };
-  }
-  
-  // 2. All other models (Kimi, Deepseek, Qwen, Minimax, GLM, etc.) route to Opencode
-  if (process.env.OPENCODEGO_API_KEY && opencodeClient) {
-    return { client: opencodeClient, name: model, provider: 'opencode' };
-  }
-
-  if (tr4SharedModels.has(m) && process.env.TR4_API_KEY && tr4Client) {
-    return { client: tr4Client, name: tr4FallbackModel, provider: 'tr4' };
-  }
-
-  return null;
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false, planningModel, coderModel, generationIntent } = await request.json();
+    const { prompt, model, context, isEdit = false, planningModel, coderModel, qaModel, generationMode = "build", generationIntent } = await request.json();
     const agentContext = loadAgentContext({ intent: generationIntent, prompt, isEdit });
     
     console.log('[generate-ai-code-stream] Received request:');
@@ -214,6 +125,13 @@ export async function POST(request: NextRequest) {
         error: 'Prompt is required' 
       }, { status: 400 });
     }
+
+    assertTr4Configured();
+    const generationRole = generationMode === "plan" ? "planning" : "coder";
+    const selectedModel = generationRole === "planning" ? planningModel ?? model : coderModel ?? model;
+    const generationRoute = resolveTeamModelRoute(generationRole, selectedModel);
+    const activeLanguageModel = getLanguageModel(generationRoute);
+    const actualModel = generationRoute.model;
     
     // Create a stream for real-time updates
     const encoder = new TextEncoder();
@@ -1274,54 +1192,11 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         // Track packages that need to be installed
         const packagesToInstall: string[] = [];
         
-        // Determine which provider to use based on model
-        let modelProvider: any;
-        let actualModel: string = '';
-        let isUsingCustomRoute = false;
-        let activeStreamProvider = 'groq';
-
-        const isAnthropic = model.startsWith('anthropic/');
-        const isGoogle = model.startsWith('google/');
-        const isOpenAI = model.startsWith('openai/');
-        const isKimiGroq = model === 'moonshotai/kimi-k2-instruct-0905';
-
-        const customRoute = getModelProvider(model);
-        if (customRoute) {
-          isUsingCustomRoute = true;
-          modelProvider = customRoute.client;
-          actualModel = customRoute.name;
-          activeStreamProvider = customRoute.provider;
-          console.log(`[generate-ai-code-stream] Intercepting request: Using ${customRoute.provider.toUpperCase()} provider with model: ${actualModel}`);
-        }
-
-        if (!isUsingCustomRoute) {
-          modelProvider = isAnthropic ? anthropic : 
-                                (isOpenAI ? openai : 
-                                (isGoogle ? googleGenerativeAI : 
-                                (isKimiGroq ? groq : groq)));
-          activeStreamProvider = isAnthropic ? 'anthropic' : isGoogle ? 'google' : isOpenAI ? 'openai' : 'groq';
-          
-          if (isAnthropic) {
-            actualModel = model.replace('anthropic/', '');
-          } else if (isOpenAI) {
-            actualModel = model.replace('openai/', '');
-          } else if (isKimiGroq) {
-            actualModel = 'moonshotai/kimi-k2-instruct-0905';
-          } else if (isGoogle) {
-            actualModel = model.replace('google/', '');
-          } else {
-            actualModel = model;
-          }
-          console.log(`[generate-ai-code-stream] Using standard provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
-        }
-
-        console.log(`[generate-ai-code-stream] Using provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
-        console.log(`[generate-ai-code-stream] AI Gateway enabled: ${isUsingAIGateway}`);
-        console.log(`[generate-ai-code-stream] Model string: ${model}`);
+        console.log(`[generate-ai-code-stream] Using TR4 model: ${actualModel}`);
 
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
-          model: modelProvider.chat ? modelProvider.chat(actualModel) : modelProvider(actualModel),
+          model: activeLanguageModel,
           messages: [
             { 
               role: 'system', 
@@ -1391,17 +1266,10 @@ It's better to have 3 complete files than 10 incomplete files.`
           ],
           maxTokens: 8192, // Reduce to ensure completion
           stopSequences: [] // Don't stop early
-          // Note: Neither Groq nor Anthropic models support tool/function calling in this context
-          // We use XML tags for package detection instead
+          // XML tags provide package detection without tool/function calls.
         };
         
-        // Add temperature for non-reasoning models (skip for custom routes to avoid bad request errors)
-        if (!model.startsWith('openai/gpt-5') && !isUsingCustomRoute) {
-          streamOptions.temperature = 0.7;
-        }
-        
-        // Add reasoning effort for GPT-5 models
-        if (isOpenAI) {
+        if (actualModel.startsWith("gpt-")) {
           streamOptions.experimental_providerMetadata = {
             openai: {
               reasoningEffort: 'high'
@@ -1680,25 +1548,6 @@ It's better to have 3 complete files than 10 incomplete files.`
           } catch (streamError: any) {
             console.error(`[generate-ai-code-stream] Error calling streamText/streaming (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
             
-            // Shared Kimi models may fall back from OpenCode to the configured TR4 API.
-            if (isUsingCustomRoute && customRoute?.provider === 'opencode' && activeStreamProvider !== 'tr4' && tr4SharedModels.has(model.toLowerCase()) && process.env.TR4_API_KEY && tr4Client) {
-              const tr4Model = tr4Client.chat ? tr4Client.chat(tr4FallbackModel) : tr4Client(tr4FallbackModel);
-
-              console.log(`[generate-ai-code-stream] Opencode failed. Switching to fallback provider: TR4 with model: ${tr4FallbackModel}`);
-              await sendProgress({
-                type: 'info',
-                message: 'Opencode failed, falling back to TR4 API...'
-              });
-
-              streamOptions.model = tr4Model;
-              actualModel = tr4FallbackModel;
-              activeStreamProvider = 'tr4';
-              retryCount = 0; // Reset retry count for the new provider
-              continue; // Retry with the new provider immediately
-            }
-            
-            // Check if this is a Groq service unavailable error
-            const isGroqServiceError = isKimiGroq && streamError.message?.includes('Service unavailable');
             const isRetryableError = streamError.message?.includes('Service unavailable') || 
                                     streamError.message?.includes('rate limit') ||
                                     streamError.message?.includes('timeout') ||
@@ -1717,28 +1566,14 @@ It's better to have 3 complete files than 10 incomplete files.`
               // Wait before retry with exponential backoff
               await new Promise(resolve => setTimeout(resolve, retryCount * 2000));
               
-              // If Groq fails, try switching to a fallback model
-              if (isGroqServiceError && retryCount === maxRetries) {
-                console.log('[generate-ai-code-stream] Groq service unavailable, falling back to GPT-4');
-                streamOptions.model = openai('gpt-4-turbo');
-                actualModel = 'gpt-4-turbo';
-              }
             } else {
               // Final error, send to user
               await sendProgress({
                 type: 'error',
-                error: `${activeStreamProvider} provider failed: ${streamError.message}`
+                error: `TR4 ${actualModel} failed: ${streamError.message}`
               });
 
-              // If this is a Google model error, provide helpful info
-              if (isGoogle) {
-                await sendProgress({ 
-                  type: 'info', 
-                  message: 'Tip: Make sure your GEMINI_API_KEY is set correctly and has proper permissions.' 
-                });
-              }
-              
-              throw streamError;
+              throw new Error(`TR4 ${actualModel} failed: ${streamError.message}`);
             }
           }
         }
@@ -1859,43 +1694,15 @@ Original request: ${prompt}
                 
 Provide the complete file content without any truncation. Include all necessary imports, complete all functions, and close all tags properly.`;
                 
-                // Make a focused API call to complete this specific file
-                // Create a new client for the completion based on the provider
-                let completionClient: any;
-                if (model.includes('gpt') || model.includes('openai')) {
-                  completionClient = openai;
-                } else if (model.includes('claude')) {
-                  completionClient = anthropic;
-                } else if (model === 'moonshotai/kimi-k2-instruct-0905') {
-                  completionClient = groq;
-                } else {
-                  completionClient = groq;
-                }
-                
-                // Determine the correct model name for the completion
-                let completionModelName: string;
-                if (model === 'moonshotai/kimi-k2-instruct-0905') {
-                  completionModelName = 'moonshotai/kimi-k2-instruct-0905';
-                } else if (model.includes('openai')) {
-                  completionModelName = model.replace('openai/', '');
-                } else if (model.includes('anthropic')) {
-                  completionModelName = model.replace('anthropic/', '');
-                } else if (model.includes('google')) {
-                  completionModelName = model.replace('google/', '');
-                } else {
-                  completionModelName = model;
-                }
-                
                 const completionResult = await streamText({
-                  model: completionClient.chat ? completionClient.chat(completionModelName) : completionClient(completionModelName),
+                  model: getLanguageModel(resolveModelRoute("repair")),
                   messages: [
                     { 
                       role: 'system', 
                       content: 'You are completing a truncated file. Provide the complete, working file content.'
                     },
                     { role: 'user', content: completionPrompt }
-                  ],
-                  temperature: model.startsWith('openai/gpt-5') ? undefined : appConfig.ai.defaultTemperature
+                  ]
                 });
                 
                 // Get the full text from the stream

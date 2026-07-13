@@ -72,6 +72,30 @@ test("resolveModelRoute selects the approved TR4 role defaults", () => {
   assert.equal(resolveModelRoute("repair").model, "gpt-5.6-sol");
 });
 
+test("TR4 language model normalizes the configured API base URL", () => {
+  const previousApiBase = process.env.TR4_API_BASE;
+  const previousApiKey = process.env.TR4_API_KEY;
+  process.env.TR4_API_BASE = "https://api.tr4.net";
+  process.env.TR4_API_KEY = "test-key";
+
+  try {
+    const languageModel = getLanguageModel(resolveModelRoute("coder"));
+    const internalModel = languageModel as unknown as {
+      config: { url: (options: { path: string }) => URL };
+    };
+
+    assert.equal(
+      internalModel.config.url({ path: "/chat/completions" }).toString().startsWith("https://api.tr4.net/v1"),
+      true,
+    );
+  } finally {
+    if (previousApiBase === undefined) delete process.env.TR4_API_BASE;
+    else process.env.TR4_API_BASE = previousApiBase;
+    if (previousApiKey === undefined) delete process.env.TR4_API_KEY;
+    else process.env.TR4_API_KEY = previousApiKey;
+  }
+});
+
 test("route credentials override environment settings when creating a language model", async () => {
   const languageModel = getLanguageModel({
     id: "custom-endpoint",

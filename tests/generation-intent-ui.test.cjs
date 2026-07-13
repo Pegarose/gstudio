@@ -43,19 +43,14 @@ test('generation stream timeout measures inactivity instead of total duration', 
   assert.doesNotMatch(route, /AbortSignal\.timeout\(providerTimeoutMs\)/);
 });
 
-test('OpenCode fallback honors the configured TR4 provider without silently using Cline', () => {
-  assert.match(route, /let activeStreamProvider/);
-  assert.match(route, /activeStreamProvider !== 'tr4'/);
-  assert.match(route, /activeStreamProvider = 'tr4'/);
-  assert.match(route, /falling back to TR4 API/);
-  assert.match(route, /const tr4FallbackModel = 'gpt-5\.6-sol'/);
-  assert.doesNotMatch(route, /cline-pass/);
-  assert.doesNotMatch(route, /falling back to Cline API/);
-  assert.match(intentRoute, /Falling back to TR4 API/);
-  assert.match(intentRoute, /const tr4FallbackModel = 'gpt-5\.6-sol'/);
-  assert.doesNotMatch(intentRoute, /Cline fallback/);
-  assert.doesNotMatch(intentRoute, /CLINE_API_KEY/);
-  assert.doesNotMatch(route, /streamOptions\.model !== clineModel/);
+test('generation and edit intent routes resolve only configured TR4 models', () => {
+  assert.match(route, /resolveTeamModelRoute/);
+  assert.match(route, /getLanguageModel/);
+  assert.match(intentRoute, /resolveModelRoute\("intent"\)/);
+  assert.match(route, /assertTr4Configured\(\)/);
+  assert.match(intentRoute, /assertTr4Configured\(\)/);
+  assert.doesNotMatch(route, /OPENCODEGO_API_KEY|opencodeClient|provider === 'opencode'/);
+  assert.doesNotMatch(intentRoute, /OPENCODEGO_API_KEY|opencodeClient|provider === 'opencode'/);
 });
 
 test('runtime and generation specification do not define an unconfigured Cline provider', () => {

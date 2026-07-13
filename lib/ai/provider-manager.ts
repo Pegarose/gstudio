@@ -25,6 +25,12 @@ function withV1Suffix(baseURL: string | undefined): string | undefined {
   return `${baseURL.replace(/\/$/, '')}/v1`;
 }
 
+export function assertTr4Configured(): void {
+  if (!process.env.TR4_API_KEY || !process.env.TR4_API_BASE) {
+    throw new Error("TR4_API_KEY and TR4_API_BASE must be configured before generation");
+  }
+}
+
 function getProviderSettings(
   provider: ModelProvider,
   overrides: Pick<ModelRoute, 'apiKey' | 'baseURL'> = {},
