@@ -6,7 +6,9 @@ export const roleRequirements: Record<ModelRole, CapabilityRequirement> = {
   intent: { structuredOutput: true, reasoning: true },
   "vision-planner": { vision: true, structuredOutput: true, reasoning: true },
   "design-planner": { structuredOutput: true, reasoning: true },
+  planning: { structuredOutput: true, reasoning: true },
   coder: { structuredOutput: true, reasoning: true },
+  qa: { structuredOutput: true, reasoning: true },
   repair: { structuredOutput: true, reasoning: true },
 };
 

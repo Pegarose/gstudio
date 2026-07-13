@@ -26,5 +26,12 @@ export interface ModelRoute {
   fallbacks: string[];
 }
 
-export type ModelRole = "intent" | "vision-planner" | "design-planner" | "coder" | "repair";
+export type ModelRole =
+  | "intent"
+  | "vision-planner"
+  | "design-planner"
+  | "planning"
+  | "coder"
+  | "qa"
+  | "repair";
 export type CapabilityRequirement = Partial<ModelCapabilities>;

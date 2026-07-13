@@ -29,19 +29,18 @@ test("OpenCode Kimi fallback stays within the configured TR4 provider", () => {
   assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "tr4-code");
 });
 
-test("configured coder fallback never silently routes to Cline", () => {
+test("configured active routes do not define fallbacks", () => {
   const router = createModelRouter(modelRegistry);
-  const fallbacks = router.fallbacksFor("opencode-code", { structuredOutput: true });
 
-  assert.deepEqual(fallbacks.map((route) => route.id), ["tr4-code"]);
-  assert.equal(fallbacks[0].model, "gpt-5.6-sol");
-  assert.equal(fallbacks.some((route) => route.provider === "cline"), false);
+  for (const route of modelRegistry) {
+    assert.deepEqual(router.fallbacksFor(route.id, { structuredOutput: true }), []);
+  }
 });
 
-test("configured role registry contains only the selected TR4 and OpenCode providers", () => {
+test("configured role registry contains only TR4 routes", () => {
   const configuredProviders = new Set(modelRegistry.map((route) => route.provider));
 
-  assert.deepEqual(configuredProviders, new Set(["tr4", "opencode"]));
+  assert.deepEqual(configuredProviders, new Set(["tr4"]));
 });
 
 test("preferred incompatible routes use ordered compatible fallbacks before registry order", () => {
@@ -66,9 +65,11 @@ test("preferred incompatible routes fall back to matching registry order when th
   assert.equal(router.resolve({ vision: true }, "preferred").id, "first-registry-vision");
 });
 
-test("resolveModelRoute selects configured defaults and preferred model names", () => {
-  assert.equal(resolveModelRoute("coder").id, "opencode-code");
-  assert.equal(resolveModelRoute("coder", "qwen3.7-max").id, "repair-opencode");
+test("resolveModelRoute selects the approved TR4 role defaults", () => {
+  assert.equal(resolveModelRoute("planning").model, "gpt-5.6-terra");
+  assert.equal(resolveModelRoute("coder").model, "gpt-5.3-codex-spark");
+  assert.equal(resolveModelRoute("qa").model, "codex-auto-review");
+  assert.equal(resolveModelRoute("repair").model, "gpt-5.6-sol");
 });
 
 test("route credentials override environment settings when creating a language model", async () => {
