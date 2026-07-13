@@ -32,6 +32,7 @@ interface PrimaryCta extends SourceLocation {}
 const HEADING_TAG = /^h[1-6]$/i;
 const INTERACTIVE_TAG = new Set(["button", "input", "select", "textarea"]);
 const SEMANTIC_TEXT_BLOCK_TAGS = new Set(["p", "blockquote", "li", "figcaption", "label", "button", "a"]);
+const INLINE_TEXT_TAGS = new Set(["a", "abbr", "b", "code", "em", "i", "mark", "small", "span", "strong", "sub", "sup"]);
 const ARBITRARY_COLOR_UTILITY = /(?:^|\s)(?:text|bg|border|from|to|via|fill|stroke|ring|outline|decoration|shadow|caret|accent)-\[(?:#[\da-f]{3,8}|(?:rgba?|hsla?|oklch|oklab|hwb)\()/i;
 const ARBITRARY_FONT_UTILITY = /(?:^|\s)font-\[(?!var\()[^\]]+\]/i;
 const NUMERIC_CLAIM = /\b\d+(?:[,.]\d+)*(?:\s*(?:%|x|customers?|teams?|users?|awards?))?\b/i;
@@ -115,9 +116,9 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
 
       if (ts.isJsxElement(node)) {
         const tagName = node.openingElement.tagName.getText(sourceFile).toLowerCase();
-        const isSemanticTextBlock = SEMANTIC_TEXT_BLOCK_TAGS.has(tagName) || HEADING_TAG.test(tagName);
-        if (isSemanticTextBlock && !suppressVisibleText) {
-          const value = normalizeWhitespace(jsxText(node.children));
+        const aggregatesVisibleText = shouldAggregateVisibleText(node, tagName);
+        if (aggregatesVisibleText && !suppressVisibleText) {
+          const value = normalizeWhitespace(jsxInlineText(node.children));
           if (value) {
             visibleText.push({ value, location: locationFor(node.openingElement) });
           }
@@ -126,7 +127,10 @@ export function validateStaticRules(input: StaticValidationInput): RuleViolation
           primaryCtas.push(locationFor(node.openingElement));
         }
 
-        ts.forEachChild(node, (child) => visit(child, suppressVisibleText || isSemanticTextBlock));
+        ts.forEachChild(node, (child) => visit(
+          child,
+          suppressVisibleText || (aggregatesVisibleText && shouldSuppressTextFromChild(child)),
+        ));
         return;
       }
 
@@ -358,6 +362,37 @@ function jsxText(children: readonly ts.JsxChild[]): string {
     if (ts.isJsxText(child)) return child.getText();
     if (ts.isJsxExpression(child) && child.expression && isTextLiteral(child.expression)) return child.expression.text;
     if (ts.isJsxElement(child) || ts.isJsxFragment(child)) return jsxText(child.children);
+    return "";
+  }).join(" ");
+}
+
+function shouldAggregateVisibleText(node: ts.JsxElement, tagName: string): boolean {
+  return SEMANTIC_TEXT_BLOCK_TAGS.has(tagName)
+    || HEADING_TAG.test(tagName)
+    || node.children.some((child) => {
+      if (ts.isJsxText(child)) return Boolean(child.getText().trim());
+      return ts.isJsxExpression(child) && Boolean(child.expression && isTextLiteral(child.expression));
+    });
+}
+
+function isInlineTextNode(node: ts.Node): boolean {
+  if (ts.isJsxFragment(node)) return true;
+  return ts.isJsxElement(node)
+    && INLINE_TEXT_TAGS.has(node.openingElement.tagName.getText().toLowerCase());
+}
+
+function shouldSuppressTextFromChild(node: ts.Node): boolean {
+  return ts.isJsxText(node)
+    || (ts.isJsxExpression(node) && Boolean(node.expression && isTextLiteral(node.expression)))
+    || isInlineTextNode(node);
+}
+
+function jsxInlineText(children: readonly ts.JsxChild[]): string {
+  return children.map((child) => {
+    if (ts.isJsxText(child)) return child.getText();
+    if (ts.isJsxExpression(child) && child.expression && isTextLiteral(child.expression)) return child.expression.text;
+    if (ts.isJsxFragment(child)) return jsxInlineText(child.children);
+    if (ts.isJsxElement(child) && isInlineTextNode(child)) return jsxInlineText(child.children);
     return "";
   }).join(" ");
 }

@@ -94,6 +94,27 @@ test("confirmed marked-up proof is evaluated as one semantic block", () => {
   assert.deepEqual(approved, []);
 });
 
+test("confirmed marked-up proof in a generic text container is evaluated once", () => {
+  const files = [{
+    path: "src/App.tsx",
+    content: "export const App = () => <><h1>Welcome</h1><div>Trusted by <strong>50,000</strong> teams</div></>;",
+  }];
+
+  const rejected = validateStaticRules({
+    files,
+    brief: { ...passingBrief, contentFacts: [] },
+    plan: passingPlan,
+  }).filter((violation) => violation.code === "invented-proof");
+  const approved = validateStaticRules({
+    files,
+    brief: { ...passingBrief, contentFacts: ["Trusted by 50,000 teams"] },
+    plan: passingPlan,
+  }).filter((violation) => violation.code === "invented-proof");
+
+  assert.deepEqual(rejected.map((violation) => violation.evidence), ["Trusted by 50,000 teams"]);
+  assert.deepEqual(approved, []);
+});
+
 test("static validation rejects rooted Windows and UNC artifact paths", () => {
   const codes = violationCodes({
     files: [
