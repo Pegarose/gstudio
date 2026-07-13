@@ -57,7 +57,7 @@ Run static, dependency, build, browser, accessibility, responsive, and honesty/o
 
 ### Inspiration
 
-Run the same hard gates. The current builder does not yet have a durable extracted brand bundle, so the live adapter records brand-language evaluation as unavailable and fails closed with a `capture-policy`/reference-evidence terminal result rather than inventing a pass. A later reference-capture integration can supply the brand bundle without weakening the gate.
+Run the same hard gates. When the request provides a durable extracted brand bundle, the live adapter evaluates it as the brand-language evidence. Without that bundle, it fails closed with a `capture-policy`/reference-evidence terminal result rather than inventing a pass. A later reference-capture integration can supply the bundle without weakening the gate.
 
 ### Clone
 
@@ -72,7 +72,8 @@ The composition root adapts existing services into `ValidationRunnerDependencies
 - build gate: `validateSandboxBuild`
 - runtime/accessibility/responsive: `validateBrowser`
 - scratch/edit visual: deterministic originality/honesty result derived from passed static rules
-- inspiration/clone: explicit evidence-unavailable terminal result until the durable reference-capture plan lands
+- inspiration: brand-language evaluation from a durable extracted brand bundle, otherwise an explicit evidence-unavailable terminal result
+- clone: explicit evidence-unavailable terminal result until the durable dual desktop/mobile reference-capture plan lands
 
 The repair generator remains the configured TR4 repair route. It receives the existing bounded repair context. It cannot receive policy, provider, secret, sandbox-infrastructure, user-input, or missing-reference failures.
 

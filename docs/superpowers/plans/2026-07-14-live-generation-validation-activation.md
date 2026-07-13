@@ -14,7 +14,7 @@
 - Static, dependency, build, runtime, responsive, keyboard, reduced-motion, and accessibility failures are hard gates.
 - Only `static-rule`, `dependency`, `compile`, `runtime`, `responsive`, `accessibility`, and `visual-fidelity` can enter one repair attempt.
 - Policy, provider, secret, sandbox-infrastructure, user-input, and missing-reference failures never invoke repair.
-- Clone and inspiration fail closed with a persisted reference-evidence error until durable desktop/mobile reference capture is wired.
+- Clone fails closed with a persisted reference-evidence error until durable desktop/mobile reference capture is wired. Inspiration uses the same hard gates when a durable brand-language bundle is supplied; it fails closed with that error only when the bundle is absent.
 - A failed candidate or failed repair must restore the affected sandbox files before the route emits its terminal error.
 - `complete` means `finalStatus: "passed"`; no earlier candidate event may be treated as a product success.
 - Screenshot assertions use `maxDiffPixelRatio: 0`; only explicit dynamic selectors may be masked.
@@ -33,7 +33,7 @@
 - Produces `SandboxFileSnapshot`, `snapshotFiles(sandboxId, paths)`, and `restoreFiles(sandboxId, snapshots)` on `SandboxService`.
 - Consumes only safe `src/**` and `public/**` generated paths plus `index.html`.
 
-- [ ] **Step 1: Write failing snapshot tests**
+- [x] **Step 1: Write failing snapshot tests**
 
 ```ts
 test("snapshot and restore rewrite an existing file and remove a newly created file", async () => {
@@ -60,13 +60,13 @@ test("snapshot rejects a shell-unsafe or out-of-scope path", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the unit test and verify RED**
+- [x] **Step 2: Run the unit test and verify RED**
 
 Run: `npx tsx --test tests/unit/sandbox-validation-snapshot.test.ts`
 
 Expected: FAIL because `SandboxService` has no snapshot API.
 
-- [ ] **Step 3: Implement safe snapshots**
+- [x] **Step 3: Implement safe snapshots**
 
 ```ts
 export interface SandboxFileSnapshot {
@@ -80,7 +80,7 @@ restoreFiles(sandboxId: string, snapshots: SandboxFileSnapshot[]): Promise<void>
 
 Validate every normalized path with `/^(?:src|public)\/[A-Za-z0-9][A-Za-z0-9._/-]*$|^index\.html$/`. Resolve the provider once. Record `null` only for a provider read failure that represents an absent file; rethrow all other errors. Restore non-null snapshots with `writeFile`; remove null snapshots using a fixed `rm -f -- <validated-path>` command. Never interpolate unvalidated input into a shell command.
 
-- [ ] **Step 4: Run the focused unit test and service suite**
+- [x] **Step 4: Run the focused unit test and service suite**
 
 Run:
 
@@ -90,7 +90,7 @@ npx tsx --test tests/unit/sandbox-validation-snapshot.test.ts tests/unit/sandbox
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/sandbox/service/contracts.ts lib/sandbox/service/sandbox-service.ts tests/unit/sandbox-validation-snapshot.test.ts
@@ -179,7 +179,7 @@ validateSandboxBuild(sandboxId, sandbox);
 validateBrowser({ url: sandboxUrl, desktopWidth: 1440 });
 ```
 
-For scratch/edit, return passed originality and honesty checks only when static validation has no error violations. For clone/inspiration without a durable dual reference bundle, throw `new ValidationStepError("capture-policy", "Reference evidence unavailable for live fidelity validation.")`. Do not invent source visual data.
+For scratch/edit, return passed originality and honesty checks only when static validation has no error violations. For inspiration with a durable brand-language bundle, evaluate that bundle; otherwise throw `new ValidationStepError("capture-policy", "Reference evidence unavailable for live fidelity validation.")`. For clone, require a durable dual desktop/mobile reference bundle and source-layout evidence or throw the same error. Do not invent source visual data.
 
 Add `setGenerationSandboxId(id, sandboxId)` and `persistGenerationTerminalValidation` repository wrappers; each uses parameterized SQL and existing allowlisted JSON storage.
 
