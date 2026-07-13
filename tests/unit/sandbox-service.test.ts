@@ -17,3 +17,17 @@ test("sandbox operations resolve the requested sandbox instead of an active sing
   await service.runCommand("sandbox-b", { command: "pwd" });
   assert.deepEqual(calls, ["sandbox-a:pwd", "sandbox-b:pwd"]);
 });
+
+test("sandbox setup resolves the requested sandbox", async () => {
+  const calls: string[] = [];
+  const providers = {
+    connect: async (id: string) => ({
+      setupViteApp: async () => calls.push(id),
+    }),
+  };
+  const service = createSandboxService({ providers: providers as never, leases: {} as never });
+
+  await service.setupViteApp("sandbox-a");
+
+  assert.deepEqual(calls, ["sandbox-a"]);
+});

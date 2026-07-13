@@ -24,6 +24,7 @@ export interface SandboxService {
     provider: "e2b" | "vercel";
   }): Promise<SandboxInfo>;
   connect(sandboxId: string): Promise<SandboxInfo>;
+  setupViteApp(sandboxId: string): Promise<void>;
   writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void>;
   installPackages(sandboxId: string, packages: string[]): Promise<CommandResult>;
   startDevServer(sandboxId: string): Promise<void>;

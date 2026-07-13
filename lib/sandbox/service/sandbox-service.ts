@@ -76,6 +76,10 @@ export function createSandboxService(
       return info;
     },
 
+    async setupViteApp(sandboxId) {
+      await (await resolve(sandboxId)).setupViteApp();
+    },
+
     async writeFiles(sandboxId, files) {
       const provider = await resolve(sandboxId);
       for (const file of files) {
