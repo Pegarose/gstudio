@@ -20,6 +20,8 @@ export interface ModelRoute {
   id: string;
   provider: ModelProvider;
   model: string;
+  apiKey?: string;
+  baseURL?: string;
   capabilities: ModelCapabilities;
   timeoutMs: number;
   fallbacks: string[];

@@ -25,7 +25,11 @@ function withV1Suffix(baseURL: string | undefined): string | undefined {
   return `${baseURL.replace(/\/$/, '')}/v1`;
 }
 
-function getProviderSettings(provider: ModelProvider): { apiKey?: string; baseURL?: string } {
+function getProviderSettings(
+  provider: ModelProvider,
+  overrides: Pick<ModelRoute, 'apiKey' | 'baseURL'> = {},
+): { apiKey?: string; baseURL?: string } {
+  const defaults = (() => {
   switch (provider) {
     case 'openai':
       return { apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.OPENAI_API_KEY, baseURL: process.env.AI_GATEWAY_API_KEY ? aiGatewayBaseURL : process.env.OPENAI_BASE_URL };
@@ -46,10 +50,16 @@ function getProviderSettings(provider: ModelProvider): { apiKey?: string; baseUR
     case 'vercel-gateway':
       return { apiKey: process.env.AI_GATEWAY_API_KEY, baseURL: aiGatewayBaseURL };
   }
+  })();
+
+  return {
+    apiKey: overrides.apiKey ?? defaults.apiKey,
+    baseURL: overrides.baseURL ?? defaults.baseURL,
+  };
 }
 
-function getOrCreateClient(provider: ModelProvider): ProviderClient {
-  const { apiKey, baseURL } = getProviderSettings(provider);
+function getOrCreateClient(provider: ModelProvider, overrides: Pick<ModelRoute, 'apiKey' | 'baseURL'> = {}): ProviderClient {
+  const { apiKey, baseURL } = getProviderSettings(provider, overrides);
   const cacheKey = `${provider}:${apiKey ?? ''}:${baseURL ?? ''}`;
   const cached = clientCache.get(cacheKey);
   if (cached) return cached;
@@ -74,7 +84,7 @@ function getOrCreateClient(provider: ModelProvider): ProviderClient {
 }
 
 export function getProviderForRoute(route: ModelRoute): ProviderResolution {
-  return { client: getOrCreateClient(route.provider), actualModel: route.model };
+  return { client: getOrCreateClient(route.provider, route), actualModel: route.model };
 }
 
 export function getLanguageModel(route: ModelRoute): LanguageModel {
@@ -83,9 +93,14 @@ export function getLanguageModel(route: ModelRoute): LanguageModel {
 }
 
 function legacyRouteForModel(modelId: string): ModelRoute {
-  const configured = appConfig.ai.modelApiConfig?.[modelId as keyof typeof appConfig.ai.modelApiConfig];
+  const configured = appConfig.ai.modelApiConfig?.[modelId as keyof typeof appConfig.ai.modelApiConfig] as {
+    provider: ModelProvider;
+    model: string;
+    apiKey?: string;
+    baseURL?: string;
+  } | undefined;
   if (configured) {
-    return { id: `legacy:${modelId}`, provider: configured.provider as ModelProvider, model: configured.model, capabilities: { vision: false, structuredOutput: false, reasoning: false, toolUse: false }, timeoutMs: 45_000, fallbacks: [] };
+    return { id: `legacy:${modelId}`, provider: configured.provider, model: configured.model, apiKey: configured.apiKey, baseURL: configured.baseURL, capabilities: { vision: false, structuredOutput: false, reasoning: false, toolUse: false }, timeoutMs: 45_000, fallbacks: [] };
   }
 
   if (modelId === 'moonshotai/kimi-k2-instruct-0905') return legacyModelRoute(modelId, 'groq');
