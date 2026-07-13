@@ -89,6 +89,18 @@ before(async () => {
       return;
     }
 
+    if (fixtureName === "radio-group") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html>
+        <html lang="en"><head><title>Radio focus fixture</title>
+        <style>input:focus-visible { outline: 3px solid #005fcc; outline-offset: 3px; }</style>
+        </head><body><main><fieldset><legend>Choose one</legend>
+        <label><input type="radio" name="choice" value="one" checked /> One</label>
+        <label><input type="radio" name="choice" value="two" /> Two</label>
+        </fieldset></main></body></html>`);
+      return;
+    }
+
     if (fixtureName === "overflow" || fixtureName === "passing") {
       const fixture = await readFile(join(fixturesDirectory, fixtureName, "index.html"), "utf8");
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -177,6 +189,12 @@ test("browser validator finds infinite animation within the primary-content subt
 
 test("browser validator ignores hidden elements when traversing keyboard focus", async () => {
   const report = await validateBrowser({ url: `${fixtureOrigin}/hidden-focusable`, desktopWidth: 1440 });
+
+  assert.equal(report.keyboard.passed, true, report.keyboard.evidence);
+});
+
+test("browser validator follows Chromium's single Tab stop for a same-name radio group", async () => {
+  const report = await validateBrowser({ url: `${fixtureOrigin}/radio-group`, desktopWidth: 1440 });
 
   assert.equal(report.keyboard.passed, true, report.keyboard.evidence);
 });

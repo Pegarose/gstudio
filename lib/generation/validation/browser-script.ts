@@ -179,8 +179,10 @@ async function collectFocusProbe(page: Page): Promise<{ focusVisible: boolean; e
   }
 
   const invisibleElements: string[] = [];
+  const traversedFocus = new Set<number>();
+  const maxTabPresses = baselines.length + 1;
 
-  for (let index = 0; index < baselines.length; index += 1) {
+  for (let attempt = 0; attempt < maxTabPresses; attempt += 1) {
     await page.keyboard.press("Tab");
     const currentFocus = await page.evaluate(createPageCallback<{
       selector: string;
@@ -196,9 +198,17 @@ async function collectFocusProbe(page: Page): Promise<{ focusVisible: boolean; e
     });
 
     if (!currentFocus || !currentFocus.before) {
-      invisibleElements.push("No focusable active element after Tab.");
-      continue;
+      if (traversedFocus.size === 0) {
+        invisibleElements.push("No focusable active element after Tab.");
+      }
+      break;
     }
+
+    if (traversedFocus.has(currentFocus.index)) {
+      break;
+    }
+
+    traversedFocus.add(currentFocus.index);
 
     const focusChanged = currentFocus.before.outline !== currentFocus.after.outline
       || currentFocus.before.boxShadow !== currentFocus.after.boxShadow
@@ -215,7 +225,7 @@ async function collectFocusProbe(page: Page): Promise<{ focusVisible: boolean; e
   }
 
   if (invisibleElements.length === 0) {
-    return { focusVisible: true, evidence: "Visible focus confirmed for " + baselines.length + " interactive element(s)." };
+    return { focusVisible: true, evidence: "Visible focus confirmed for " + traversedFocus.size + " keyboard Tab stop(s)." };
   }
 
   return {
