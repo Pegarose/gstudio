@@ -61,8 +61,8 @@ export function validateStructuredRepairPatch(input: RepairPatchValidationInput)
   const patch = RepairArtifactPatchSchema.parse(input.patch);
   const allowedPaths = new Set(input.context.files.map((file) => file.path));
 
-  if (patch.files.length === 0) {
-    throw new Error("Repair patch contains no files.");
+  if (patch.files.length === 0 && patch.packages.length === 0) {
+    throw new Error("Repair patch contains neither files nor packages.");
   }
 
   for (const file of patch.files) {

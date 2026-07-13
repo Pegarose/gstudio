@@ -70,7 +70,7 @@ export function buildRepairContext(rawInput: RepairContextInput): RepairContext 
     ...implicatedFiles.map((file) => file.path),
     ...directDependencies
       .map((file) => file.path)
-      .filter((path) => artifactByPath.has(path)),
+      .filter((path) => isAllowedDirectDependency(path, implicatedFiles, artifactByPath)),
   ]);
   const files = artifact.files.filter((file) => selectedPaths.has(file.path));
   const failedChecks = collectFailedChecks(report);
@@ -111,8 +111,85 @@ function collectFailedChecks(report: ValidationReport): RepairFailedCheck[] {
   const responsiveChecks = report.responsive
     .filter((check) => !check.passed)
     .map((check) => ({ name: `responsive-${check.width}`, file: null, evidence: check.evidence }));
+  const visualChecks = report.repairEligibility?.failureClass === "visual-fidelity" && report.visual
+    ? [{
+      name: "visual-fidelity",
+      file: null,
+      evidence: JSON.stringify(report.visual),
+    }]
+    : [];
+  const repairReason = report.repairEligibility?.failureClass === "visual-fidelity"
+    ? [{
+      name: "repair-eligibility",
+      file: null,
+      evidence: report.repairEligibility.reason,
+    }]
+    : [];
 
-  return [...staticChecks, ...nonStaticChecks, ...responsiveChecks];
+  return [...staticChecks, ...nonStaticChecks, ...responsiveChecks, ...visualChecks, ...repairReason];
+}
+
+function isAllowedDirectDependency(
+  candidatePath: string,
+  implicatedFiles: readonly ValidationFile[],
+  artifactByPath: ReadonlyMap<string, ValidationFile>,
+): boolean {
+  const candidate = artifactByPath.get(candidatePath);
+  if (!candidate) return false;
+
+  const directlyReferenced = new Set(
+    implicatedFiles.flatMap((file) => extractDirectRelativeReferences(file)),
+  );
+  if (!matchesReference(candidate.path, directlyReferenced)) return false;
+
+  if (isCssFile(candidate.path)) return true;
+  return isComponentFile(candidate.path)
+    && implicatedFiles.some((file) => directoryOf(file.path) === directoryOf(candidate.path));
+}
+
+function extractDirectRelativeReferences(file: ValidationFile): string[] {
+  const references: string[] = [];
+  const pattern = /(?:import|export)\s+(?:[^'";]+?\s+from\s+)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|@import\s+(?:url\(\s*)?["']([^"']+)["']/g;
+
+  for (let match = pattern.exec(file.content); match; match = pattern.exec(file.content)) {
+    const specifier = match[1] ?? match[2] ?? match[3];
+    if (specifier?.startsWith(".")) {
+      references.push(resolveRelativePath(file.path, specifier));
+    }
+  }
+
+  return references;
+}
+
+function resolveRelativePath(fromPath: string, specifier: string): string {
+  const resolvedSegments = directoryOf(fromPath).split("/").filter(Boolean);
+  for (const segment of specifier.split("/").filter(Boolean)) {
+    if (segment === ".") continue;
+    if (segment === "..") {
+      resolvedSegments.pop();
+      continue;
+    }
+    resolvedSegments.push(segment);
+  }
+  return resolvedSegments.join("/");
+}
+
+function matchesReference(candidatePath: string, references: ReadonlySet<string>): boolean {
+  const withoutExtension = candidatePath.replace(/\.(?:[cm]?[jt]sx?|css)$/i, "");
+  return references.has(candidatePath) || references.has(withoutExtension);
+}
+
+function isCssFile(path: string): boolean {
+  return /^src\/.+\.css$/i.test(path);
+}
+
+function isComponentFile(path: string): boolean {
+  return /^src\/.+\.(?:[cm]?tsx|[cm]?jsx)$/i.test(path);
+}
+
+function directoryOf(path: string): string {
+  const separator = path.lastIndexOf("/");
+  return separator === -1 ? "" : path.slice(0, separator);
 }
 
 function buildRepairPrompt(input: {

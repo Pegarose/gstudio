@@ -3,6 +3,7 @@ import type {
   GenerationArtifact,
   ValidationReport,
 } from "../contracts/validation";
+import { ValidationReportSchema } from "../contracts/validation";
 import {
   buildRepairContext,
   type DirectRepairDependencyResolver,
@@ -136,33 +137,39 @@ export function createGenerationOrchestrator({
         throw new RepairClaimError(input.generation.id);
       }
 
-      const context = buildRepairContext({
-        report: input.initialReport,
-        artifact: input.artifact,
-        plan: input.plan,
-        implicatedFilePaths: input.implicatedFilePaths,
-        resolveDirectDependencies: repair.resolveDirectDependencies,
-      });
-      const generatedPatch = await repair.generatePatch(context);
-      const structurallyValidPatch = validateStructuredRepairPatch({
-        context,
-        patch: generatedPatch,
-      });
-      const patch = repair.validatePatch
-        ? await repair.validatePatch({ context, patch: structurallyValidPatch })
-        : structurallyValidPatch;
-      const validatedPatch = validateStructuredRepairPatch({ context, patch });
+      let finalReport: ValidationReport;
+      try {
+        const context = buildRepairContext({
+          report: input.initialReport,
+          artifact: input.artifact,
+          plan: input.plan,
+          implicatedFilePaths: input.implicatedFilePaths,
+          resolveDirectDependencies: repair.resolveDirectDependencies,
+        });
+        const generatedPatch = await repair.generatePatch(context);
+        const structurallyValidPatch = validateStructuredRepairPatch({
+          context,
+          patch: generatedPatch,
+        });
+        const patch = repair.validatePatch
+          ? await repair.validatePatch({ context, patch: structurallyValidPatch })
+          : structurallyValidPatch;
+        const validatedPatch = validateStructuredRepairPatch({ context, patch });
 
-      await repair.applyPatch({
-        generationId: input.generation.id,
-        sandboxId: input.sandboxId,
-        patch: validatedPatch,
-      });
+        await repair.applyPatch({
+          generationId: input.generation.id,
+          sandboxId: input.sandboxId,
+          patch: validatedPatch,
+        });
 
-      const finalReport = await runner.run({
-        ...input,
-        artifact: mergeRepairPatch(input.artifact, validatedPatch),
-      });
+        finalReport = await runner.run({
+          ...input,
+          artifact: mergeRepairPatch(input.artifact, validatedPatch),
+        });
+        finalReport = markRepairAttemptExhausted(finalReport);
+      } catch (error) {
+        finalReport = terminalRepairFailureReport(input.initialReport, error);
+      }
       await repository.persistValidation({
         generationId: input.generation.id,
         report: finalReport,
@@ -177,4 +184,35 @@ function isGenerationRepairPersistence(
   repository: GenerationValidationPersistence,
 ): repository is GenerationRepairPersistence {
   return "claimRepairAttempt" in repository && typeof repository.claimRepairAttempt === "function";
+}
+
+function terminalRepairFailureReport(
+  initialReport: ValidationReport,
+  error: unknown,
+): ValidationReport {
+  const evidence = error instanceof Error ? error.message : String(error);
+  return ValidationReportSchema.parse({
+    ...initialReport,
+    repairEligibility: {
+      eligible: false,
+      failureClass: "sandbox-infrastructure",
+      reason: `Automatic repair terminated after its claimed attempt: ${evidence}`,
+    },
+    finalStatus: "failed",
+  });
+}
+
+function markRepairAttemptExhausted(report: ValidationReport): ValidationReport {
+  if (report.finalStatus !== "failed") return report;
+
+  return ValidationReportSchema.parse({
+    ...report,
+    repairEligibility: {
+      eligible: false,
+      ...(report.repairEligibility?.failureClass
+        ? { failureClass: report.repairEligibility.failureClass }
+        : {}),
+      reason: `Automatic repair attempt has already been used; final revalidation failed: ${report.repairEligibility?.reason ?? "validation failed"}`,
+    },
+  });
 }

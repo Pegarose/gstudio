@@ -9,6 +9,10 @@ import {
   type DirectRepairDependencyResolver,
 } from "../../lib/generation/repair/repair-context";
 import {
+  mergeRepairPatch,
+  validateStructuredRepairPatch,
+} from "../../lib/generation/repair/repair-generator";
+import {
   INELIGIBLE_REPAIR_FAILURE_CLASSES,
   REPAIRABLE_FAILURE_CLASSES,
   isRepairEligibleFailure,
@@ -31,8 +35,12 @@ import type { ValidationRunnerDependencies } from "../../lib/generation/validati
 
 const artifact: GenerationArtifact = {
   files: [
-    { path: "src/App.tsx", content: "export function App() { return <h1>Needs repair</h1>; }" },
+    {
+      path: "src/App.tsx",
+      content: "import \"./index.css\";\nimport { Helper } from \"./Helper\";\nexport function App() { return <h1>Needs repair</h1>; }",
+    },
     { path: "src/index.css", content: ":root { --color-accent: #0055aa; }" },
+    { path: "src/Helper.tsx", content: "export function Helper() { return null; }" },
     { path: "src/components/Card.tsx", content: "export function Card() { return null; }" },
     { path: "src/unrelated.tsx", content: "export function Unrelated() { return null; }" },
   ],
@@ -125,6 +133,8 @@ test("repair context contains only implicated files and deterministic direct dep
     return [
       artifact.files[1]!,
       artifact.files[2]!,
+      artifact.files[3]!,
+      artifact.files[4]!,
     ];
   };
 
@@ -138,12 +148,99 @@ test("repair context contains only implicated files and deterministic direct dep
   assert.deepEqual(context.files.map((file) => file.path), [
     "src/App.tsx",
     "src/index.css",
-    "src/components/Card.tsx",
+    "src/Helper.tsx",
   ]);
+  assert.doesNotMatch(context.prompt, /src\/components\/Card\.tsx/);
   assert.doesNotMatch(context.prompt, /src\/unrelated\.tsx/);
   assert.match(context.prompt, /Original validated design plan/i);
   assert.match(context.prompt, /Do not delete planned functionality/i);
   assert.match(context.prompt, /focus-visible/i);
+});
+
+test("dependency repair accepts a package-only patch and merges it without unrelated file scope", () => {
+  const context = buildRepairContext({
+    report: {
+      static: [],
+      responsive: [],
+      dependency: { passed: false, evidence: "Missing package: lucide-react" },
+      repairEligibility: {
+        eligible: true,
+        reason: "Missing package: lucide-react",
+        failureClass: "dependency",
+      },
+      finalStatus: "failed",
+    },
+    artifact,
+    plan: { primaryCta: null, declaredPackages: [] },
+  });
+
+  const patch = validateStructuredRepairPatch({
+    context,
+    patch: { files: [], packages: ["lucide-react"] },
+  });
+  const merged = mergeRepairPatch(artifact, patch);
+
+  assert.deepEqual(context.files, []);
+  assert.deepEqual(patch, { files: [], packages: ["lucide-react"] });
+  assert.deepEqual(merged.packages, ["lucide-react"]);
+  assert.equal(merged.files.length, artifact.files.length);
+});
+
+test("visual-fidelity repair context carries every clone axis and terminal reason", () => {
+  const context = buildRepairContext({
+    report: {
+      static: [],
+      responsive: [],
+      visual: {
+        structure: 0.72,
+        typography: 0.64,
+        color: 0.86,
+        spacing: 0.75,
+        responsive: 0.69,
+        screenshot: 0.88,
+      },
+      repairEligibility: {
+        eligible: true,
+        reason: "Clone visual hard gates failed: structure, typography, spacing, responsive.",
+        failureClass: "visual-fidelity",
+      },
+      finalStatus: "failed",
+    },
+    artifact,
+    plan: { primaryCta: null, declaredPackages: [] },
+  });
+
+  const visualEvidence = context.failedChecks.find((check) => check.name === "visual-fidelity");
+  const reason = context.failedChecks.find((check) => check.name === "repair-eligibility");
+
+  assert.match(visualEvidence?.evidence ?? "", /"typography":0.64/);
+  assert.match(visualEvidence?.evidence ?? "", /"responsive":0.69/);
+  assert.match(reason?.evidence ?? "", /Clone visual hard gates failed/);
+  assert.match(context.prompt, /"structure":0.72/);
+  assert.match(context.prompt, /Clone visual hard gates failed/);
+});
+
+test("repair patch rejects unsafe and out-of-scope file edits", () => {
+  const context = buildRepairContext({
+    report: failedReport(),
+    artifact,
+    plan: { primaryCta: null, declaredPackages: [] },
+  });
+
+  assert.throws(
+    () => validateStructuredRepairPatch({
+      context,
+      patch: { files: [{ path: "../escape.ts", content: "export {};" }], packages: [] },
+    }),
+    /unsafe file path/i,
+  );
+  assert.throws(
+    () => validateStructuredRepairPatch({
+      context,
+      patch: { files: [{ path: "src/unrelated.tsx", content: "export {};" }], packages: [] },
+    }),
+    /outside the repair scope/i,
+  );
 });
 
 test("repair policy classifies every documented failure class", () => {
@@ -252,11 +349,100 @@ test("a failed revalidation is terminal and never starts another repair", async 
   });
 
   assert.equal(result.finalStatus, "failed");
+  assert.equal(result.repairEligibility?.eligible, false);
+  assert.match(result.repairEligibility?.reason ?? "", /automatic repair attempt has already been used/i);
   assert.equal(claimCalls, 1);
   assert.equal(generatorCalls, 1);
   assert.equal(persisted.length, 1);
   assert.equal(persisted[0]?.finalStatus, "failed");
   assert.deepEqual(runLog, ["static", "dependency", "build", "browser", "capture", "visual"]);
+});
+
+test("post-claim generator, patch, applier, and revalidation errors persist one non-retryable terminal report", async () => {
+  const cases = [
+    {
+      name: "generator",
+      generatePatch: async (): Promise<GenerationArtifact> => {
+        throw new Error("repair model unavailable");
+      },
+      applyPatch: async (): Promise<void> => undefined,
+      brief: { contentFacts: [], allowedPlaceholders: [] },
+    },
+    {
+      name: "patch validation",
+      generatePatch: async (): Promise<GenerationArtifact> => ({
+        files: [{ path: "src/unrelated.tsx", content: "export {};" }],
+        packages: [],
+      }),
+      applyPatch: async (): Promise<void> => undefined,
+      brief: { contentFacts: [], allowedPlaceholders: [] },
+    },
+    {
+      name: "applier",
+      generatePatch: async (): Promise<GenerationArtifact> => ({
+        files: [{ path: "src/App.tsx", content: "export function App() { return <h1>Repaired</h1>; }" }],
+        packages: [],
+      }),
+      applyPatch: async (): Promise<void> => {
+        throw new Error("sandbox apply failed");
+      },
+      brief: { contentFacts: [], allowedPlaceholders: [] },
+    },
+    {
+      name: "revalidation",
+      generatePatch: async (): Promise<GenerationArtifact> => ({
+        files: [{ path: "src/App.tsx", content: "export function App() { return <h1>Repaired</h1>; }" }],
+        packages: [],
+      }),
+      applyPatch: async (): Promise<void> => undefined,
+      brief: { contentFacts: [1] as never, allowedPlaceholders: [] },
+    },
+  ] as const;
+
+  for (const failure of cases) {
+    const runLog: string[] = [];
+    const persisted: ValidationReport[] = [];
+    let claimCalls = 0;
+    let generatorCalls = 0;
+    const orchestrator = createGenerationOrchestrator({
+      validation: passingValidationDependencies(runLog),
+      repository: {
+        persistValidation: async ({ report }) => {
+          persisted.push(report);
+        },
+        claimRepairAttempt: async () => {
+          claimCalls += 1;
+          return { id: "generation-1", repairCount: 1 };
+        },
+      },
+      repair: {
+        generatePatch: async (context) => {
+          generatorCalls += 1;
+          return failure.generatePatch(context);
+        },
+        applyPatch: failure.applyPatch,
+      },
+    });
+
+    const result = await orchestrator.repairAndRevalidate({
+      generation: { id: "generation-1", repairCount: 0 },
+      initialReport: failedReport(),
+      artifact,
+      brief: failure.brief,
+      plan: { primaryCta: null, declaredPackages: [] },
+      mode: "scratch",
+      sandboxId: "sandbox-1",
+      sandboxUrl: "https://sandbox.example.test",
+      desktopWidth: 1440,
+    });
+
+    assert.equal(result.finalStatus, "failed", `${failure.name} must be terminal`);
+    assert.equal(result.repairEligibility?.eligible, false, `${failure.name} must not retry`);
+    assert.equal(claimCalls, 1, `${failure.name} must claim exactly once`);
+    assert.equal(generatorCalls, 1, `${failure.name} must generate at most once`);
+    assert.equal(persisted.length, 1, `${failure.name} must persist one terminal report`);
+    assert.equal(persisted[0]?.finalStatus, "failed");
+  }
 });
 
 test("a generation that has already repaired rejects before claiming or generating again", async () => {
