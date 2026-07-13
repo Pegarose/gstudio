@@ -11,6 +11,7 @@ import {
   type ProductBrief,
   type RepairEligibility,
   type RuleViolation,
+  type ResponsiveCheckResult,
   type SkippedValidationStep,
   type ValidationFailureClass,
   type ValidationReport,
@@ -40,6 +41,7 @@ const CLONE_VISUAL_AXES = [
 ] as const;
 
 const MINIMUM_CLONE_VISUAL_SCORE = 0.8;
+const REQUIRED_MOBILE_VIEWPORT_WIDTHS = [320, 375, 414, 768] as const;
 
 export interface ReferenceBundle {
   source?: unknown;
@@ -58,6 +60,7 @@ export interface ValidationRunInput {
   mode: GenerationMode;
   sandboxId: string;
   sandboxUrl: string;
+  desktopWidth: number;
   reference?: ReferenceBundle;
 }
 
@@ -86,7 +89,7 @@ export interface ValidationRunnerDependencies {
   validateStatic(input: Pick<ValidationRunInput, "artifact" | "brief" | "plan">): RuleViolation[] | Promise<RuleViolation[]>;
   validateDependencies(input: Pick<ValidationRunInput, "artifact" | "plan">): DependencyValidationResult | Promise<DependencyValidationResult>;
   validateBuild(input: Pick<ValidationRunInput, "artifact" | "sandboxId">): Promise<SandboxBuildResult>;
-  validateBrowser(input: Pick<ValidationRunInput, "sandboxId" | "sandboxUrl">): Promise<BrowserValidationReport>;
+  validateBrowser(input: Pick<ValidationRunInput, "sandboxId" | "sandboxUrl" | "desktopWidth">): Promise<BrowserValidationReport>;
   captureOutput(input: Pick<ValidationRunInput, "artifact" | "mode" | "sandboxId" | "sandboxUrl" | "reference">): Promise<ValidationCapture>;
   evaluateVisual(input: ValidationRunInput & { capture: ValidationCapture }): Promise<ModeVisualValidation>;
 }
@@ -180,13 +183,15 @@ export async function runValidation(
     const browser = await dependencies.validateBrowser({
       sandboxId: input.sandboxId,
       sandboxUrl: input.sandboxUrl,
+      desktopWidth: input.desktopWidth,
     });
     report.runtime = browser.runtime;
-    report.responsive = browser.responsive;
+    const responsive = validateRequiredResponsiveProbes(browser.responsive, input.desktopWidth);
+    report.responsive = responsive;
     report.keyboard = browser.keyboard;
     report.reducedMotion = browser.reducedMotion;
     report.accessibility = browser.accessibility;
-    collectBrowserFailures(browser, failures);
+    collectBrowserFailures({ ...browser, responsive }, failures);
   } catch (error) {
     const failure = errorForStep(error, "sandbox-infrastructure");
     report.runtime = failedCheck(failure.message);
@@ -257,6 +262,46 @@ function collectBrowserFailures(
   if (!browser.keyboard.passed) addFailure(failures, "accessibility", browser.keyboard.evidence);
   if (!browser.reducedMotion.passed) addFailure(failures, "accessibility", browser.reducedMotion.evidence);
   if (!browser.accessibility.passed) addFailure(failures, "accessibility", browser.accessibility.evidence);
+}
+
+function validateRequiredResponsiveProbes(
+  probes: ResponsiveCheckResult[],
+  desktopWidth: number,
+): ResponsiveCheckResult[] {
+  const requiredWidths = [...REQUIRED_MOBILE_VIEWPORT_WIDTHS, desktopWidth];
+  const requiredWidthSet = new Set(requiredWidths);
+  const counts = new Map<number, number>();
+  const violations: ResponsiveCheckResult[] = [];
+
+  for (const probe of probes) {
+    counts.set(probe.width, (counts.get(probe.width) ?? 0) + 1);
+    if (!requiredWidthSet.has(probe.width)) {
+      violations.push(responsiveViolation(
+        probe.width,
+        `Unexpected responsive probe: ${probe.width}px.`,
+      ));
+    }
+  }
+
+  for (const width of requiredWidths) {
+    const count = counts.get(width) ?? 0;
+    if (count === 0) {
+      violations.push(responsiveViolation(width, `Missing required responsive probe: ${width}px.`));
+    } else if (count > 1) {
+      violations.push(responsiveViolation(width, `Duplicate responsive probe: ${width}px (${count} probes).`));
+    }
+  }
+
+  return [...probes, ...violations];
+}
+
+function responsiveViolation(width: number, evidence: string): ResponsiveCheckResult {
+  return {
+    width,
+    horizontalOverflow: false,
+    passed: false,
+    evidence,
+  };
 }
 
 async function runModeVisualValidation(

@@ -12,6 +12,7 @@ type FixtureOptions = {
   visualScore?: number;
   buildPassed?: boolean;
   captureFailureClass?: "capture-policy" | "provider-unavailable";
+  responsiveWidths?: number[];
 };
 
 function validationFixture(options: FixtureOptions = {}) {
@@ -32,6 +33,7 @@ function validationFixture(options: FixtureOptions = {}) {
       mode: "clone" as const,
       sandboxId: "sandbox-1",
       sandboxUrl: "https://sandbox.example.test",
+      desktopWidth: 1440,
       reference: { source: "clone-reference" },
     },
     dependencies: {
@@ -64,7 +66,7 @@ function validationFixture(options: FixtureOptions = {}) {
         order.push("browser");
         return {
           runtime: { passed: runtimePassed, evidence: runtimePassed ? "runtime passed" : "runtime error" },
-          responsive: [320, 375, 414, 768, 1440].map((width) => ({
+          responsive: (options.responsiveWidths ?? [320, 375, 414, 768, 1440]).map((width) => ({
             width,
             horizontalOverflow: false,
             passed: true,
@@ -154,4 +156,21 @@ test("a build failure persists one partial report and skips browser and capture 
   assert.equal(persisted[0]?.generationId, "generation-1");
   assert.equal(persisted[0]?.status, "failed");
   assert.equal((persisted[0]?.report as { finalStatus?: string }).finalStatus, "failed");
+});
+
+test("responsive validation rejects missing, duplicate, and unexpected viewport probes", async () => {
+  const cases = [
+    { widths: [] as number[], evidence: /missing required responsive probe: 320px/i },
+    { widths: [320, 375, 414, 768, 1440, 1440], evidence: /duplicate responsive probe: 1440px/i },
+    { widths: [320, 375, 414, 768, 1440, 1024], evidence: /unexpected responsive probe: 1024px/i },
+  ];
+
+  for (const { widths, evidence } of cases) {
+    const fixture = validationFixture({ responsiveWidths: widths });
+    const report = await runValidation(fixture.input, fixture.dependencies);
+
+    assert.equal(report.finalStatus, "failed");
+    assert.equal(report.repairEligibility?.failureClass, "responsive");
+    assert.ok(report.responsive.some((check) => check.passed === false && evidence.test(check.evidence)));
+  }
 });
