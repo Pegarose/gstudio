@@ -35,6 +35,19 @@ test('generation API uses the canonical context loader and explicit intent', () 
   assert.doesNotMatch(route, /AGENTS\.md CORE SYSTEM RULES/);
 });
 
+test('generation API sanitizes every model-facing prompt and context value', () => {
+  assert.match(route, /import\s+\{\s*sanitizeGenerationModelInput\s*\}/);
+  assert.match(route, /const modelInput = sanitizeGenerationModelInput\(\{ prompt, context: context \?\? \{\} \}\)/);
+  assert.match(route, /const modelPrompt = modelInput\.prompt/);
+  assert.match(route, /const modelContext = modelInput\.context as Record<string, any>/);
+  assert.match(route, /loadAgentContext\(\{ intent: generationIntent, prompt: modelPrompt, isEdit \}\)/);
+  assert.match(route, /content: modelPrompt/);
+  assert.match(route, /Object\.entries\(modelContext\.currentFiles\)/);
+  assert.match(route, /modelContext\.conversationContext/);
+  assert.doesNotMatch(route, /Object\.entries\(context\.currentFiles\)/);
+  assert.doesNotMatch(route, /context\.conversationContext/);
+});
+
 test('generation stream timeout measures inactivity instead of total duration', () => {
   assert.match(route, /AI_STREAM_TIMEOUT_MS \|\| 180000/);
   assert.match(route, /const attemptController = new AbortController\(\)/);
@@ -64,6 +77,12 @@ test('generation route validates and repairs generated code before completion', 
   assert.ok(qualityGateIndex >= 0, 'quality gate invocation is present');
   assert.ok(completeIndex >= 0, 'complete event is present');
   assert.ok(qualityGateIndex < completeIndex, 'quality gate runs before completion');
+});
+
+test('generation route rebuilds approved files through the complete artifact parser', () => {
+  assert.match(route, /import\s+\{[^}]*parseCompleteFileArtifact[^}]*\}\s+from ["']@\/lib\/generation\/tr4-quality-service["']/);
+  assert.match(route, /const validatedFiles = parseCompleteFileArtifact\(generatedCode\)/);
+  assert.doesNotMatch(route, /const validatedFileRegex = \/<file path=/);
 });
 
 test('runtime and generation specification do not define an unconfigured Cline provider', () => {

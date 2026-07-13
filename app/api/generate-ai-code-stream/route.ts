@@ -11,7 +11,8 @@ import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager
 import { resolveModelRoute } from '@/lib/models/registry';
 import { resolveTeamModelRoute } from '@/lib/models/team-model-policy';
 import { GenerationQualityError, runGenerationQualityGate } from "@/lib/generation/quality-gate";
-import { repairGeneratedCode, reviewGeneratedCode } from "@/lib/generation/tr4-quality-service";
+import { sanitizeGenerationModelInput } from "@/lib/generation/context/model-input";
+import { parseCompleteFileArtifact, repairGeneratedCode, reviewGeneratedCode } from "@/lib/generation/tr4-quality-service";
 
 // Force dynamic route to enable streaming
 export const dynamic = 'force-dynamic';
@@ -63,16 +64,19 @@ declare global {
 export async function POST(request: NextRequest) {
   try {
     const { prompt, model, context, isEdit = false, planningModel, coderModel, qaModel, generationMode = "build", generationIntent } = await request.json();
-    const agentContext = loadAgentContext({ intent: generationIntent, prompt, isEdit });
+    const modelInput = sanitizeGenerationModelInput({ prompt, context: context ?? {} });
+    const modelPrompt = modelInput.prompt;
+    const modelContext = modelInput.context as Record<string, any>;
+    const agentContext = loadAgentContext({ intent: generationIntent, prompt: modelPrompt, isEdit });
     
     console.log('[generate-ai-code-stream] Received request:');
-    console.log('[generate-ai-code-stream] - prompt:', prompt);
+    console.log('[generate-ai-code-stream] - prompt:', modelPrompt);
     console.log('[generate-ai-code-stream] - isEdit:', isEdit);
     console.log('[generate-ai-code-stream] - generationIntent:', agentContext.intent);
     console.log('[generate-ai-code-stream] - agentSkills:', agentContext.skills.join(', '));
-    console.log('[generate-ai-code-stream] - context.sandboxId:', context?.sandboxId);
-    console.log('[generate-ai-code-stream] - context.currentFiles:', context?.currentFiles ? Object.keys(context.currentFiles) : 'none');
-    console.log('[generate-ai-code-stream] - currentFiles count:', context?.currentFiles ? Object.keys(context.currentFiles).length : 0);
+    console.log('[generate-ai-code-stream] - context.sandboxId:', modelContext.sandboxId);
+    console.log('[generate-ai-code-stream] - context.currentFiles:', modelContext.currentFiles ? Object.keys(modelContext.currentFiles) : 'none');
+    console.log('[generate-ai-code-stream] - currentFiles count:', modelContext.currentFiles ? Object.keys(modelContext.currentFiles).length : 0);
     
     // Initialize conversation state if not exists
     if (!global.conversationState) {
@@ -93,7 +97,7 @@ export async function POST(request: NextRequest) {
     const userMessage: ConversationMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
-      content: prompt,
+      content: modelPrompt,
       timestamp: Date.now(),
       metadata: {
         sandboxId: context?.sandboxId
@@ -114,8 +118,8 @@ export async function POST(request: NextRequest) {
     }
     
     // Debug: Show a sample of actual file content
-    if (context?.currentFiles && Object.keys(context.currentFiles).length > 0) {
-      const firstFile = Object.entries(context.currentFiles)[0];
+    if (modelContext.currentFiles && Object.keys(modelContext.currentFiles).length > 0) {
+      const firstFile = Object.entries(modelContext.currentFiles)[0];
       console.log('[generate-ai-code-stream] - sample file:', firstFile[0]);
       console.log('[generate-ai-code-stream] - sample content preview:', 
         typeof firstFile[1] === 'string' ? firstFile[1].substring(0, 100) + '...' : 'not a string');
@@ -184,7 +188,7 @@ export async function POST(request: NextRequest) {
               const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, manifest, model: planningModel || model })
+                body: JSON.stringify({ prompt: modelPrompt, manifest, model: planningModel || model })
               });
               
               if (intentResponse.ok) {
@@ -241,7 +245,7 @@ You have been given the EXACT location of the code to edit.
 - Reason: ${target.reason}
 
 Make ONLY the change requested by the user. Do not modify any other code.
-User request: "${prompt}"`;
+User request: "${modelPrompt}"`;
                     
                     // Set up edit context with just this one file
                     editContext = {
@@ -278,14 +282,14 @@ User request: "${prompt}"`;
               });
               // Fall back to old method on any error if we have a manifest
               if (manifest) {
-                editContext = selectFilesForEdit(prompt, manifest);
+                editContext = selectFilesForEdit(modelPrompt, manifest);
               }
             }
           } else {
             // Fall back to old method if AI analysis fails
             console.warn('[generate-ai-code-stream] AI intent analysis failed, falling back to keyword method');
             if (manifest) {
-              editContext = selectFilesForEdit(prompt, manifest);
+              editContext = selectFilesForEdit(modelPrompt, manifest);
             } else {
               console.log('[generate-ai-code-stream] No manifest available for fallback');
               await sendProgress({ 
@@ -329,7 +333,7 @@ User request: "${prompt}"`;
                       const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt, manifest, model: planningModel || model })
+                        body: JSON.stringify({ prompt: modelPrompt, manifest, model: planningModel || model })
                       });
                       
                       if (intentResponse.ok) {
@@ -342,7 +346,7 @@ User request: "${prompt}"`;
                         if (!searchPlan || searchPlan.searchTerms.length === 0) {
                           console.warn('[generate-ai-code-stream] No target files after fetch, searching for relevant files');
                           
-                          const promptLower = prompt.toLowerCase();
+                          const promptLower = modelPrompt.toLowerCase();
                           const allFilePaths = Object.keys(manifest.files);
                           
                           // Look for component names mentioned in the prompt
@@ -380,7 +384,7 @@ Edit Type: ${searchPlan?.editType || 'UPDATE_COMPONENT'}
 Reasoning: ${searchPlan?.reasoning || 'Modifying based on user request'}
 
 Files to Edit: ${targetFiles.join(', ') || 'To be determined'}
-User Request: "${prompt}"
+User Request: "${modelPrompt}"
 
 ## Your Mandatory Thought Process (Execute Internally):
 Before writing ANY code, you MUST follow these steps:
@@ -928,16 +932,16 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         }
 
         // Build full prompt with context
-        let fullPrompt = prompt;
-        if (context) {
+        let fullPrompt = modelPrompt;
+        if (modelContext) {
           const contextParts = [];
           
-          if (context.sandboxId) {
-            contextParts.push(`Current sandbox ID: ${context.sandboxId}`);
+          if (modelContext.sandboxId) {
+            contextParts.push(`Current sandbox ID: ${modelContext.sandboxId}`);
           }
           
-          if (context.structure) {
-            contextParts.push(`Current file structure:\n${context.structure}`);
+          if (modelContext.structure) {
+            contextParts.push(`Current file structure:\n${modelContext.structure}`);
           }
           
           // Use backend file cache instead of frontend-provided files
@@ -1003,7 +1007,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                         const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ prompt, manifest: filesData.manifest, model: planningModel || model })
+                          body: JSON.stringify({ prompt: modelPrompt, manifest: filesData.manifest, model: planningModel || model })
                         });
                         
                         if (intentResponse.ok) {
@@ -1012,7 +1016,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                           
                           // Create edit context from AI analysis
                           // Note: We can't execute search here without file contents, so fall back to keyword method
-                          const fileContext = selectFilesForEdit(prompt, filesData.manifest);
+                          const fileContext = selectFilesForEdit(modelPrompt, filesData.manifest);
                           editContext = fileContext;
                           enhancedSystemPrompt = fileContext.systemPrompt;
                           
@@ -1077,7 +1081,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               }
               
               contextParts.push('\n🚨 CRITICAL INSTRUCTIONS - VIOLATION = FAILURE 🚨');
-              contextParts.push('1. Analyze the user request: "' + prompt + '"');
+              contextParts.push('1. Analyze the user request: "' + modelPrompt + '"');
               contextParts.push('2. Identify the MINIMUM number of files that need editing (usually just ONE)');
               contextParts.push('3. PRESERVE ALL EXISTING CONTENT in those files');
               contextParts.push('4. ONLY ADD/MODIFY the specific part requested');
@@ -1101,13 +1105,13 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               contextParts.push('If you DELETE or REWRITE existing functionality, you have FAILED');
               contextParts.push('ONLY change what was EXPLICITLY requested - NOTHING MORE');
             }
-          } else if (context.currentFiles && Object.keys(context.currentFiles).length > 0) {
+          } else if (modelContext.currentFiles && Object.keys(modelContext.currentFiles).length > 0) {
             // Fallback to frontend-provided files if backend cache is empty
             console.log('[generate-ai-code-stream] Warning: Backend cache empty, using frontend files');
             contextParts.push('\nEXISTING APPLICATION - DO NOT REGENERATE FROM SCRATCH');
             contextParts.push('Current project files (modify these, do not recreate):');
             
-            const fileEntries = Object.entries(context.currentFiles);
+            const fileEntries = Object.entries(modelContext.currentFiles);
             for (const [path, content] of fileEntries) {
               if (typeof content === 'string') {
                 contextParts.push(`\n<file path="${path}">\n${content}\n</file>`);
@@ -1150,10 +1154,10 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           }
           
           // Add conversation context (scraped websites, etc)
-          if (context.conversationContext) {
-            if (context.conversationContext.scrapedWebsites?.length > 0) {
+          if (modelContext.conversationContext) {
+            if (modelContext.conversationContext.scrapedWebsites?.length > 0) {
               contextParts.push('\nScraped Websites in Context:');
-              context.conversationContext.scrapedWebsites.forEach((site: any) => {
+              modelContext.conversationContext.scrapedWebsites.forEach((site: any) => {
                 contextParts.push(`\nURL: ${site.url}`);
                 contextParts.push(`Scraped: ${new Date(site.timestamp).toLocaleString()}`);
                 if (site.content) {
@@ -1166,8 +1170,8 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               });
             }
             
-            if (context.conversationContext.currentProject) {
-              contextParts.push(`\nCurrent Project: ${context.conversationContext.currentProject}`);
+            if (modelContext.conversationContext.currentProject) {
+              contextParts.push(`\nCurrent Project: ${modelContext.conversationContext.currentProject}`);
             }
           }
           
@@ -1183,7 +1187,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               contextParts.push('// Full file content when creating new files');
               contextParts.push('</file>');
             }
-            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${prompt}`;
+            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${modelPrompt}`;
           }
         }
         
@@ -1692,7 +1696,7 @@ It's better to have 3 complete files than 10 incomplete files.`
                 const completionPrompt = `Complete the following file that was truncated. Provide the FULL file content.
                 
 File: ${filePath}
-Original request: ${prompt}
+Original request: ${modelPrompt}
                 
 Provide the complete file content without any truncation. Include all necessary imports, complete all functions, and close all tags properly.`;
                 
@@ -1770,18 +1774,16 @@ Provide the complete file content without any truncation. Include all necessary 
                 : "Repair model is correcting blocking findings...",
             });
           },
-          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt, candidate }),
+          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt: modelPrompt, candidate }),
           repair: (candidate, validation) => repairGeneratedCode({ model: repairLanguageModel, candidate, validation }),
         });
 
         generatedCode = qualityResult.candidate;
         files.length = 0;
         componentCount = 0;
-        const validatedFileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-        let validatedFileMatch;
-        while ((validatedFileMatch = validatedFileRegex.exec(generatedCode)) !== null) {
-          const filePath = validatedFileMatch[1];
-          files.push({ path: filePath, content: validatedFileMatch[2].trim() });
+        const validatedFiles = parseCompleteFileArtifact(generatedCode);
+        for (const { path: filePath, content } of validatedFiles) {
+          files.push({ path: filePath, content });
           if (filePath.includes("components/")) {
             componentCount += 1;
           }
@@ -1812,7 +1814,7 @@ Provide the complete file content without any truncation. Include all necessary 
         if (isEdit && editContext && global.conversationState) {
           const editRecord: ConversationEdit = {
             timestamp: Date.now(),
-            userRequest: prompt,
+            userRequest: modelPrompt,
             editType: editContext.editIntent.type,
             targetFiles: editContext.primaryFiles,
             confidence: editContext.editIntent.confidence,
