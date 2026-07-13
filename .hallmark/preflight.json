@@ -1,0 +1,12 @@
+{
+  "capturedAt": "2026-07-14",
+  "scope": "generation progress surface",
+  "framework": "Next.js 15 App Router",
+  "fonts": ["Inter", "Geist", "Geist Mono", "Roboto Mono"],
+  "motion": ["framer-motion", "motion"],
+  "designSystem": {
+    "accent": "existing G Studio orange utility palette",
+    "spacing": "existing Tailwind utility rhythm",
+    "theme": "light and dark utility variants"
+  }
+}
