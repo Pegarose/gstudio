@@ -4,6 +4,23 @@ const { resolve } = require('node:path');
 const test = require('node:test');
 
 const builderPage = resolve(__dirname, '../app/generation/page.tsx');
+const dashboard = readFileSync(resolve(__dirname, '../app/page.tsx'), 'utf8');
+const source = readFileSync(builderPage, 'utf8');
+
+test('dashboard and builder normalize role-specific TR4 model selections', () => {
+  assert.match(dashboard, /normalizeTeamModel\("planning"/);
+  assert.match(dashboard, /normalizeTeamModel\("coder"/);
+  assert.match(dashboard, /normalizeTeamModel\("qa"/);
+  assert.match(dashboard, /selectedQaModel/);
+  assert.match(source, /teamModelOptions\.planning/);
+  assert.match(source, /teamModelOptions\.coder/);
+  assert.match(source, /teamModelOptions\.qa/);
+  assert.match(source, /normalizeTeamModel\('planning', storedPlanningModel\)/);
+  assert.match(source, /normalizeTeamModel\('coder', storedCoderModel\)/);
+  assert.match(source, /normalizeTeamModel\('qa', storedQaModel\)/);
+  assert.match(source, /normalizeTeamModel\('planning', data\.project\.planning_model\)/);
+  assert.match(source, /generationMode,/);
+});
 
 test('builder exposes a task-focused workspace instead of browser-like chrome', () => {
   const source = readFileSync(builderPage, 'utf8');

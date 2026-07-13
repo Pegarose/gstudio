@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Image from 'next/image';
 import { appConfig } from '@/config/app.config';
+import { normalizeTeamModel } from '@/lib/models/team-model-policy';
 import HeroInput from '@/components/HeroInput';
 import HeaderBrandKit from '@/components/shared/header/BrandKit/BrandKit';
 import { HeaderProvider } from '@/components/shared/header/HeaderContext';
@@ -78,18 +79,9 @@ function AISandboxPage() {
     const modelParam = searchParams.get('model');
     return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
   });
-  const [planningModel, setPlanningModel] = useState(() => {
-    const planningParam = searchParams.get('planningModel');
-    return appConfig.ai.availableModels.includes(planningParam || '') ? planningParam! : appConfig.ai.defaultModel;
-  });
-  const [coderModel, setCoderModel] = useState(() => {
-    const coderParam = searchParams.get('coderModel');
-    return appConfig.ai.availableModels.includes(coderParam || '') ? coderParam! : appConfig.ai.defaultModel;
-  });
-  const [qaModel, setQaModel] = useState(() => {
-    const qaParam = searchParams.get('qaModel');
-    return appConfig.ai.availableModels.includes(qaParam || '') ? qaParam! : appConfig.ai.defaultModel;
-  });
+  const [planningModel, setPlanningModel] = useState(() => normalizeTeamModel('planning', searchParams.get('planningModel')));
+  const [coderModel, setCoderModel] = useState(() => normalizeTeamModel('coder', searchParams.get('coderModel')));
+  const [qaModel, setQaModel] = useState(() => normalizeTeamModel('qa', searchParams.get('qaModel')));
   const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlStatus, setUrlStatus] = useState<string[]>([]);
@@ -231,9 +223,9 @@ function AISandboxPage() {
         // Set the values in the component state
         setHomeUrlInput(storedUrl);
         setSelectedStyle(storedStyle || 'modern');
-        if (storedPlanningModel) setPlanningModel(storedPlanningModel);
-        if (storedCoderModel) setCoderModel(storedCoderModel);
-        if (storedQaModel) setQaModel(storedQaModel);
+        if (storedPlanningModel) setPlanningModel(normalizeTeamModel('planning', storedPlanningModel));
+        if (storedCoderModel) setCoderModel(normalizeTeamModel('coder', storedCoderModel));
+        if (storedQaModel) setQaModel(normalizeTeamModel('qa', storedQaModel));
 
         // Register or load project in PostgreSQL database
         const storedProjectId = projectIdForSandbox;
@@ -245,9 +237,9 @@ function AISandboxPage() {
             .then(res => res.json())
             .then(data => {
               if (data.success && data.project) {
-                if (data.project.planning_model) setPlanningModel(data.project.planning_model);
-                if (data.project.coder_model) setCoderModel(data.project.coder_model);
-                if (data.project.qa_model) setQaModel(data.project.qa_model);
+                if (data.project.planning_model) setPlanningModel(normalizeTeamModel('planning', data.project.planning_model));
+                if (data.project.coder_model) setCoderModel(normalizeTeamModel('coder', data.project.coder_model));
+                if (data.project.qa_model) setQaModel(normalizeTeamModel('qa', data.project.qa_model));
               }
             })
             .catch(err => console.error('[database] Failed to load project models:', err));
@@ -260,9 +252,9 @@ function AISandboxPage() {
               name: projectNameStr,
               targetUrl: storedUrl,
               style: storedStyle || '',
-              planningModel: storedPlanningModel || planningModel || '',
-              coderModel: storedCoderModel || coderModel || '',
-              qaModel: storedQaModel || qaModel || ''
+              planningModel: normalizeTeamModel('planning', storedPlanningModel || planningModel),
+              coderModel: normalizeTeamModel('coder', storedCoderModel || coderModel),
+              qaModel: normalizeTeamModel('qa', storedQaModel || qaModel)
             })
           });
           const regData = await registrationResponse.json();
@@ -274,9 +266,9 @@ function AISandboxPage() {
           sessionStorage.setItem('projectId', String(regData.project.id));
           setActiveProjectId(regData.project.id);
           console.log('[database] Project registered with ID:', regData.project.id);
-          if (regData.project.planning_model) setPlanningModel(regData.project.planning_model);
-          if (regData.project.coder_model) setCoderModel(regData.project.coder_model);
-          if (regData.project.qa_model) setQaModel(regData.project.qa_model);
+          if (regData.project.planning_model) setPlanningModel(normalizeTeamModel('planning', regData.project.planning_model));
+          if (regData.project.coder_model) setCoderModel(normalizeTeamModel('coder', regData.project.coder_model));
+          if (regData.project.qa_model) setQaModel(normalizeTeamModel('qa', regData.project.qa_model));
         }
         
         // Add details to context if provided
@@ -318,10 +310,10 @@ function AISandboxPage() {
           setAiModel(storedModel);
         }
         if (storedPlanningModel) {
-          setPlanningModel(storedPlanningModel);
+          setPlanningModel(normalizeTeamModel('planning', storedPlanningModel));
         }
         if (storedCoderModel) {
-          setCoderModel(storedCoderModel);
+          setCoderModel(normalizeTeamModel('coder', storedCoderModel));
         }
         
         // Skip the home screen and go directly to builder
@@ -2235,6 +2227,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           model: generationMode === 'plan' ? planningModel : coderModel,
           context: fullContext,
           isEdit: conversationContext.appliedCode.length > 0,
+          generationMode,
           planningModel,
           coderModel,
           qaModel
@@ -3505,6 +3498,7 @@ Focus on the key sections and content, making it clean and modern.`;
           body: JSON.stringify({ 
             prompt,
             model: generationMode === 'plan' ? planningModel : coderModel,
+            generationMode,
             planningModel,
             coderModel,
             qaModel,
@@ -4906,7 +4900,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setPlanningModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-blue-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.planning.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>
@@ -4940,7 +4934,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setCoderModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-green-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.coder.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>
@@ -4974,7 +4968,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setQaModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-orange-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.qa.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>

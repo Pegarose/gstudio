@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { appConfig } from "@/config/app.config";
+import { normalizeTeamModel } from "@/lib/models/team-model-policy";
 
 interface Project {
   id: string;
@@ -12,6 +13,7 @@ interface Project {
   style: string;
   planningModel: string;
   coderModel: string;
+  qaModel: string;
   status: "active" | "completed" | "progress";
   updatedAt: string;
   colorTheme: string; // CSS gradient class
@@ -46,8 +48,9 @@ export default function HomePage() {
   const [projectName, setProjectName] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("4"); // Minimalist default
-  const [planningModel, setPlanningModel] = useState("gpt-5.5"); // default TR4 model
-  const [coderModel, setCoderModel] = useState("kimi-k2.7-code"); // default coding model
+  const [planningModel, setPlanningModel] = useState(() => normalizeTeamModel("planning", undefined));
+  const [coderModel, setCoderModel] = useState(() => normalizeTeamModel("coder", undefined));
+  const [qaModel, setQaModel] = useState(() => normalizeTeamModel("qa", undefined));
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   
   const [projects, setProjects] = useState<Project[]>([]);
@@ -62,8 +65,9 @@ export default function HomePage() {
             name: p.name,
             targetUrl: p.target_url,
             style: p.style,
-            planningModel: p.planning_model,
-            coderModel: p.coder_model,
+            planningModel: normalizeTeamModel("planning", p.planning_model),
+            coderModel: normalizeTeamModel("coder", p.coder_model),
+            qaModel: normalizeTeamModel("qa", p.qa_model),
             status: p.status || 'active',
             updatedAt: `Edited ${new Date(p.created_at).toLocaleDateString()}`,
             colorTheme: "from-blue-600/30 to-indigo-600/10",
@@ -84,11 +88,6 @@ export default function HomePage() {
     { id: "5", name: "Dark Mode", desc: "Sleek and aesthetic dark theme" },
     { id: "6", name: "Gradient Rich", desc: "Vibrant colors and animation" }
   ];
-
-  const models = appConfig.ai.availableModels.map(m => ({
-    id: m,
-    name: appConfig.ai.modelDisplayNames[m] || m
-  }));
 
   const validateUrl = (urlString: string) => {
     if (!urlString) return false;
@@ -127,6 +126,7 @@ export default function HomePage() {
     sessionStorage.setItem("selectedModel", coderModel);
     sessionStorage.setItem("selectedPlanningModel", planningModel);
     sessionStorage.setItem("selectedCoderModel", coderModel);
+    sessionStorage.setItem("selectedQaModel", qaModel);
     sessionStorage.setItem("projectName", projectName.trim());
     sessionStorage.setItem("additionalInstructions", additionalInstructions.trim());
     sessionStorage.setItem("generationIntent", generationIntent);
@@ -148,6 +148,7 @@ export default function HomePage() {
     sessionStorage.setItem("selectedModel", project.coderModel);
     sessionStorage.setItem("selectedPlanningModel", project.planningModel);
     sessionStorage.setItem("selectedCoderModel", project.coderModel);
+    sessionStorage.setItem("selectedQaModel", project.qaModel);
     sessionStorage.setItem("projectName", project.name);
     sessionStorage.setItem("autoStart", "true");
     
@@ -1073,7 +1074,7 @@ export default function HomePage() {
                   <span className="text-[10px] font-bold text-neutral-600 dark:text-neutral-300 uppercase tracking-wide">Custom Model Roles</span>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
                   {/* Planning model */}
                   <div className="space-y-4">
                     <div className="flex justify-between items-baseline">
@@ -1085,8 +1086,8 @@ export default function HomePage() {
                       onChange={e => setPlanningModel(e.target.value)}
                       className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-8 py-6 text-xs font-semibold focus:outline-none focus:border-neutral-400 text-neutral-850 dark:text-neutral-100 cursor-pointer"
                     >
-                      {models.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
+                      {appConfig.ai.teamModelOptions.planning.map(model => (
+                        <option key={model} value={model}>{appConfig.ai.modelDisplayNames[model] || model}</option>
                       ))}
                     </select>
                   </div>
@@ -1102,8 +1103,25 @@ export default function HomePage() {
                       onChange={e => setCoderModel(e.target.value)}
                       className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-8 py-6 text-xs font-semibold focus:outline-none focus:border-neutral-400 text-neutral-850 dark:text-neutral-100 cursor-pointer"
                     >
-                      {models.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
+                      {appConfig.ai.teamModelOptions.coder.map(model => (
+                        <option key={model} value={model}>{appConfig.ai.modelDisplayNames[model] || model}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* QA model */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-baseline">
+                      <label className="text-[9px] font-semibold text-neutral-500">3. QA / Validation Model</label>
+                      <span className="text-[8px] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-500 px-4 py-1 rounded font-bold uppercase">Validator</span>
+                    </div>
+                    <select
+                      value={qaModel}
+                      onChange={e => setQaModel(e.target.value)}
+                      className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-8 py-6 text-xs font-semibold focus:outline-none focus:border-neutral-400 text-neutral-850 dark:text-neutral-100 cursor-pointer"
+                    >
+                      {appConfig.ai.teamModelOptions.qa.map(model => (
+                        <option key={model} value={model}>{appConfig.ai.modelDisplayNames[model] || model}</option>
                       ))}
                     </select>
                   </div>
