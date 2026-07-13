@@ -20,16 +20,32 @@ export async function waitForHttpReady({
   let lastError: string | undefined;
 
   while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    const controller = new AbortController();
+    const timeoutError = new Error('HTTP readiness request timed out');
+    const timeout = setTimeout(() => controller.abort(timeoutError), remainingMs);
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      controller.signal.addEventListener('abort', () => {
+        reject(controller.signal.reason ?? timeoutError);
+      }, { once: true });
+    });
+
     try {
-      const response = await fetchImpl(url);
+      const response = await Promise.race([
+        fetchImpl(url, { signal: controller.signal }),
+        abortPromise,
+      ]);
       if (response.ok) return { ready: true };
       lastError = `HTTP ${response.status}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(timeout);
     }
+
+    if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
   return { ready: false, lastError };
 }
-
