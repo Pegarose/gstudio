@@ -39,10 +39,13 @@ interface LegacyCandidatePathSnapshot {
  */
 export function createLiveCandidateMutationBarrier() {
   let beginMutation: (() => void) | undefined;
+  let rejectStart: ((reason?: unknown) => void) | undefined;
   let resolveMutation: (() => void) | undefined;
   let rejectMutation: ((reason?: unknown) => void) | undefined;
-  const started = new Promise<void>((resolve) => {
+  let mutationStarted = false;
+  const started = new Promise<void>((resolve, reject) => {
     beginMutation = resolve;
+    rejectStart = reject;
   });
   const completed = new Promise<void>((resolve, reject) => {
     resolveMutation = resolve;
@@ -51,12 +54,18 @@ export function createLiveCandidateMutationBarrier() {
 
   return {
     applyCandidate: async () => {
+      mutationStarted = true;
       beginMutation?.();
       await completed;
     },
     waitUntilStarted: () => started,
     complete: () => resolveMutation?.(),
-    fail: (reason: unknown) => rejectMutation?.(reason),
+    fail: (reason: unknown) => {
+      rejectStart?.(reason);
+      if (mutationStarted) {
+        rejectMutation?.(reason);
+      }
+    },
   };
 }
 
