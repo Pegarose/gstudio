@@ -27,7 +27,7 @@ interface InteractiveElement extends SourceLocation {
   hasFocusVisibleUtility: boolean;
 }
 
-interface PrimaryCta extends SourceLocation {}
+type PrimaryCta = SourceLocation;
 
 const HEADING_TAG = /^h[1-6]$/i;
 const INTERACTIVE_TAG = new Set(["button", "input", "select", "textarea"]);
