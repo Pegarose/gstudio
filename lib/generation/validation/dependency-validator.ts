@@ -30,6 +30,19 @@ export interface DependencyValidationResult {
   missingPackages: string[];
 }
 
+/**
+ * Finds every direct npm package referenced by a generated artifact before a
+ * sandbox is allowed to install or write it. Unlike the legacy response parser,
+ * this includes TypeScript AST dynamic imports and re-exports.
+ */
+export function inferArtifactPackageNames(input: GenerationArtifact): string[] {
+  const artifact = GenerationArtifactSchema.parse(input);
+  return uniqueValidatedPackageNames([
+    ...artifact.packages,
+    ...extractBareImports(artifact.files),
+  ]);
+}
+
 export function validateDependencies(packages: readonly string[]): DependencyValidationResult;
 export function validateDependencies(input: DependencyValidationInput): DependencyValidationResult;
 export function validateDependencies(

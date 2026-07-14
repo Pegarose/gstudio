@@ -17,6 +17,8 @@ export interface LiveActivationInput extends ValidationRunInput {
     repairCount: number;
   };
   applyCandidate(): Promise<void>;
+  /** Restores candidate side effects that sit outside generated source files, such as dependencies. */
+  rollbackCandidate?(): Promise<void>;
   snapshotPaths: string[];
 }
 
@@ -91,7 +93,7 @@ export function createLiveValidationActivation({
           return { status: "passed", report, rolledBack: false };
         }
 
-        rollback = await restoreOnce(sandbox, input.sandboxId, snapshots);
+        rollback = await restoreActivationState(sandbox, input.sandboxId, snapshots, input.rollbackCandidate);
         report = terminalizeFailedReport(report, rollback.evidence);
         terminalPersistenceStarted = true;
         await orchestrator.persistFinal({
@@ -101,7 +103,7 @@ export function createLiveValidationActivation({
         });
         return { status: "failed", report, rolledBack: rollback.completed };
       } catch (error) {
-        rollback ??= await restoreOnce(sandbox, input.sandboxId, snapshots);
+        rollback ??= await restoreActivationState(sandbox, input.sandboxId, snapshots, input.rollbackCandidate);
 
         if (terminalPersistenceStarted) {
           const persistenceEvidence = ` ${rollback.evidence} Terminal validation persistence failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -134,10 +136,31 @@ function validationInput(input: LiveActivationInput): ValidationRunInput {
   const {
     generation: _generation,
     applyCandidate: _applyCandidate,
+    rollbackCandidate: _rollbackCandidate,
     snapshotPaths: _snapshotPaths,
     ...validation
   } = input;
   return validation;
+}
+
+async function restoreActivationState(
+  sandbox: Pick<SandboxService, "restoreFiles">,
+  sandboxId: string,
+  snapshots: Awaited<ReturnType<Pick<SandboxService, "snapshotFiles">["snapshotFiles"]>>,
+  rollbackCandidate: (() => Promise<void>) | undefined,
+): Promise<{ completed: boolean; evidence: string }> {
+  const fileRollback = await restoreOnce(sandbox, sandboxId, snapshots);
+  if (!rollbackCandidate) return fileRollback;
+
+  try {
+    await rollbackCandidate();
+    return fileRollback;
+  } catch (error) {
+    return {
+      completed: false,
+      evidence: `${fileRollback.evidence} Candidate dependency rollback failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 async function restoreOnce(

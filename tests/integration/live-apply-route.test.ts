@@ -166,6 +166,292 @@ test("apply route rejects a traversal candidate before it can reach live activat
   assert.equal(activationCalls, 0);
 });
 
+test("production apply rejects an invalid requested package before any provider or persistence side effect", async () => {
+  let providerCalls = 0;
+  let activationCalls = 0;
+  const { persistence, calls } = createRoutePersistence();
+  const applyRoute = createApplyAiCodeStreamRoute({
+    resolveProvider: async () => {
+      providerCalls += 1;
+      return undefined;
+    },
+    persistence,
+    createActivation: () => {
+      activationCalls += 1;
+      throw new Error("live activation must not start for an invalid package");
+    },
+  });
+
+  const response = await applyRoute(new Request("http://localhost/api/apply-ai-code-stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      response: candidate,
+      packages: ["lucide-react; rm -rf /"],
+      sandboxId: "sandbox-route-test",
+      generationContext: validGenerationContext,
+    }),
+  }) as never);
+
+  assert.equal(response.status, 400);
+  assert.equal(providerCalls, 0);
+  assert.equal(activationCalls, 0);
+  assert.deepEqual(calls, { resolve: 0, prepare: 0, terminal: 0, repair: 0 });
+});
+
+test("production apply rejects an invalid generated package before any provider or persistence side effect", async () => {
+  let providerCalls = 0;
+  let activationCalls = 0;
+  const { persistence, calls } = createRoutePersistence();
+  const applyRoute = createApplyAiCodeStreamRoute({
+    resolveProvider: async () => {
+      providerCalls += 1;
+      return undefined;
+    },
+    persistence,
+    createActivation: () => {
+      activationCalls += 1;
+      throw new Error("live activation must not start for an invalid generated package");
+    },
+  });
+
+  const response = await applyRoute(new Request("http://localhost/api/apply-ai-code-stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      response: `${candidate}<package>lucide-react; rm -rf /</package>`,
+      sandboxId: "sandbox-route-test",
+      generationContext: validGenerationContext,
+    }),
+  }) as never);
+
+  assert.equal(response.status, 400);
+  assert.equal(providerCalls, 0);
+  assert.equal(activationCalls, 0);
+  assert.deepEqual(calls, { resolve: 0, prepare: 0, terminal: 0, repair: 0 });
+});
+
+test("production apply rejects an invalid dynamic import before any provider or persistence side effect", async () => {
+  let providerCalls = 0;
+  let activationCalls = 0;
+  const { persistence, calls } = createRoutePersistence();
+  const applyRoute = createApplyAiCodeStreamRoute({
+    resolveProvider: async () => {
+      providerCalls += 1;
+      return undefined;
+    },
+    persistence,
+    createActivation: () => {
+      activationCalls += 1;
+      throw new Error("live activation must not start for an invalid dynamic import");
+    },
+  });
+
+  const response = await applyRoute(new Request("http://localhost/api/apply-ai-code-stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      response: '<file path="src/App.jsx">export async function load() { return import("lucide-react; rm -rf /"); }</file>',
+      sandboxId: "sandbox-route-test",
+      generationContext: validGenerationContext,
+    }),
+  }) as never);
+
+  assert.equal(response.status, 400);
+  assert.equal(providerCalls, 0);
+  assert.equal(activationCalls, 0);
+  assert.deepEqual(calls, { resolve: 0, prepare: 0, terminal: 0, repair: 0 });
+});
+
+test("production apply restores dependency manifests and uninstalls on the resolved provider after validation fails", async () => {
+  const files = new Map<string, string>([
+    ["package.json", JSON.stringify({ dependencies: { react: "^18.0.0" } })],
+    ["package-lock.json", "lock-before"],
+    ["src/App.jsx", "before"],
+  ]);
+  const installCalls: string[][] = [];
+  const commands: string[] = [];
+  const writes: string[] = [];
+  const installedNodes = new Set<string>();
+  const provider = {
+    getSandboxInfo: () => ({
+      sandboxId: "sandbox-dependency-rollback",
+      url: "https://sandbox.example.test",
+      provider: "e2b" as const,
+      createdAt: new Date(),
+    }),
+    readFile: async (path: string) => {
+      const content = files.get(path);
+      if (content === undefined) throw new Error("ENOENT");
+      return content;
+    },
+    writeFile: async (path: string, content: string) => {
+      writes.push(path);
+      files.set(path, content);
+    },
+    runCommand: async (command: string) => {
+      commands.push(command);
+      if (command === "npm uninstall --no-save -- lucide-react") {
+        installedNodes.delete("lucide-react");
+      }
+      return { stdout: "", stderr: "", exitCode: 0, success: true };
+    },
+    installPackages: async (packages: string[]) => {
+      installCalls.push([...packages]);
+      files.set("package.json", JSON.stringify({ dependencies: {
+        react: "^18.0.0",
+        "lucide-react": "^1.0.0",
+      } }));
+      files.set("package-lock.json", "lock-after");
+      installedNodes.add("lucide-react");
+      return { stdout: "installed", stderr: "", exitCode: 0, success: true };
+    },
+    restartViteServer: async () => undefined,
+  };
+  const { persistence, calls } = createRoutePersistence();
+  const persistValidation = persistence.persistValidation;
+  persistence.persistValidation = async (input) => {
+    assert.equal(files.get("package.json"), JSON.stringify({ dependencies: { react: "^18.0.0" } }));
+    assert.equal(files.get("package-lock.json"), "lock-before");
+    assert.equal(installedNodes.has("lucide-react"), false);
+    await persistValidation(input);
+  };
+  const applyRoute = createApplyAiCodeStreamRoute({
+    resolveProvider: async () => provider as never,
+    persistence,
+    createSandboxService: () => ({
+      snapshotFiles: async (_sandboxId: string, paths: string[]) => paths.map((path) => ({
+        path,
+        content: files.get(path) ?? null,
+      })),
+      restoreFiles: async (_sandboxId: string, snapshots: Array<{ path: string; content: string | null }>) => {
+        for (const snapshot of snapshots) {
+          if (snapshot.content === null) files.delete(snapshot.path);
+          else files.set(snapshot.path, snapshot.content);
+        }
+      },
+    }) as never,
+    createActivation: ({ sandbox, persistence: activationPersistence }) => createLiveValidationActivation({
+      sandbox,
+      orchestrator: {
+        validate: async () => failedReport,
+        repairAndRevalidate: async () => failedReport,
+        persistFinal: async (entry) => activationPersistence.persistValidation({
+          generationId: entry.generationId,
+          report: entry.report,
+          status: entry.status,
+        }),
+      },
+    }),
+  });
+
+  const response = await applyRoute(new Request("http://localhost/api/apply-ai-code-stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      response: '<file path="src/App.jsx">export async function loadIcon() { return import("lucide-react"); }</file>',
+      sandboxId: "sandbox-dependency-rollback",
+      generationContext: validGenerationContext,
+    }),
+  }) as never);
+
+  assert.equal(response.status, 200);
+  const events = await consumeSse(response);
+  assert.deepEqual(installCalls, [["lucide-react"]]);
+  assert.ok(commands.some((command) => command === "npm uninstall --no-save -- lucide-react"));
+  assert.equal(installedNodes.has("lucide-react"), false);
+  assert.equal(files.get("package.json"), JSON.stringify({ dependencies: { react: "^18.0.0" } }));
+  assert.equal(files.get("package-lock.json"), "lock-before");
+  assert.equal(files.get("src/App.jsx"), "before");
+  assert.equal(calls.terminal, 1);
+  assert.equal(events.at(-1)?.type, "error");
+  assert.equal(events.some((event) => event.type === "complete"), false);
+  assert.ok(writes.includes("src/App.jsx"));
+});
+
+test("production apply keeps concurrent sandbox cache state isolated", async () => {
+  const writesBySandbox = new Map<string, string[]>();
+  const providerFor = (sandboxId: string) => ({
+    getSandboxInfo: () => ({
+      sandboxId,
+      url: `https://${sandboxId}.example.test`,
+      provider: "e2b" as const,
+      createdAt: new Date(),
+    }),
+    writeFile: async (path: string) => {
+      const writes = writesBySandbox.get(sandboxId) ?? [];
+      writes.push(path);
+      writesBySandbox.set(sandboxId, writes);
+    },
+    runCommand: async () => ({ stdout: "", stderr: "", exitCode: 0, success: true }),
+    installPackages: async () => ({ stdout: "", stderr: "", exitCode: 0, success: true }),
+    restartViteServer: async () => undefined,
+  });
+  const providers = new Map([
+    ["sandbox-isolated-a", providerFor("sandbox-isolated-a")],
+    ["sandbox-isolated-b", providerFor("sandbox-isolated-b")],
+  ]);
+  const { persistence } = createRoutePersistence();
+  const applyRoute = createApplyAiCodeStreamRoute({
+    resolveProvider: async ({ sandboxId }) => providers.get(sandboxId!) as never,
+    persistence,
+    createActivation: () => ({
+      activate: async (input) => {
+        await input.applyCandidate();
+        return {
+          status: "passed" as const,
+          report: {
+            static: [],
+            responsive: [],
+            repairEligibility: { eligible: false, reason: "passed" },
+            finalStatus: "passed" as const,
+          },
+          rolledBack: false,
+        };
+      },
+    }) as never,
+  });
+  const runtime = globalThis as typeof globalThis & {
+    existingFiles?: Set<string>;
+    sandboxState?: { fileCache?: { files: Record<string, unknown> } };
+  };
+  const originalExistingFiles = runtime.existingFiles;
+  const originalSandboxState = runtime.sandboxState;
+  runtime.existingFiles = new Set(["src/App.jsx"]);
+  runtime.sandboxState = { fileCache: { files: { "src/App.jsx": { content: "foreign" } } } };
+
+  try {
+    const requests = ["sandbox-isolated-a", "sandbox-isolated-b"].map((sandboxId, index) => (
+      applyRoute(new Request("http://localhost/api/apply-ai-code-stream", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          response: `<file path="src/App.jsx">export default function App() { return <main>${index}</main>; }</file>`,
+          sandboxId,
+          generationContext: { ...validGenerationContext, generationId: `00000000-0000-4000-8000-00000000001${index}` },
+        }),
+      }) as never)
+    ));
+    const responses = await Promise.all(requests);
+    const events = await Promise.all(responses.map(consumeSse));
+
+    assert.deepEqual(writesBySandbox.get("sandbox-isolated-a"), ["src/App.jsx"]);
+    assert.deepEqual(writesBySandbox.get("sandbox-isolated-b"), ["src/App.jsx"]);
+    assert.deepEqual(events.map((stream) => stream.at(-1)?.type), ["complete", "complete"]);
+    assert.deepEqual(events.map((stream) => (stream.at(-1)?.results as { filesCreated: string[] }).filesCreated), [
+      ["src/App.jsx"],
+      ["src/App.jsx"],
+    ]);
+    assert.deepEqual(runtime.existingFiles, new Set(["src/App.jsx"]));
+    assert.deepEqual(runtime.sandboxState, { fileCache: { files: { "src/App.jsx": { content: "foreign" } } } });
+  } finally {
+    if (originalExistingFiles === undefined) delete runtime.existingFiles;
+    else runtime.existingFiles = originalExistingFiles;
+    if (originalSandboxState === undefined) delete runtime.sandboxState;
+    else runtime.sandboxState = originalSandboxState;
+  }
+});
+
 test("production apply route closes with rollback events after a partial provider write", async () => {
   const { provider, writes } = createRouteProvider({ rejectPath: "src/Fail.tsx" });
   const { persistence, calls } = createRoutePersistence();

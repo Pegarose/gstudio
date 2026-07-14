@@ -4,8 +4,7 @@ import { posix as posixPath } from 'node:path';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { parseMorphEdits, applyMorphEditToFile } from '@/lib/morph-fast-apply';
-// Sandbox import not needed - using global sandbox from sandbox-manager
-import type { SandboxState } from '@/types/sandbox';
+// Live apply resolves the requested sandbox through sandbox-manager.
 import type { ConversationState } from '@/types/conversation';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 import { getLanguageModel } from '@/lib/ai/provider-manager';
@@ -14,22 +13,20 @@ import { createGenerationOrchestrator } from '@/lib/generation/orchestration/gen
 import type { GenerationRepairPersistence } from '@/lib/generation/orchestration/generation-orchestrator';
 import { createLiveValidationActivation, LiveActivationPersistenceError } from '@/lib/generation/live/live-validation-activation';
 import { createProductionValidationDependencies } from '@/lib/generation/live/production-validation';
+import { createLiveDependencyMutation, type LiveDependencyMutation } from '@/lib/generation/live/live-dependency-mutation';
 import {
   createLiveCandidateMutationBarrier,
   emitLiveActivationTerminalEvents,
-  snapshotLegacyCandidateMutationState,
   writeLiveCandidateFile,
 } from '@/lib/generation/live/live-apply-terminal';
 import { GenerationArtifactSchema, type GenerationArtifact, type ValidationReport } from '@/lib/generation/contracts/validation';
 import { createGeneration, getGeneration, claimGenerationRepairAttempt, persistGenerationTerminalValidation, saveGenerationPayload, setGenerationSandboxId, updateGenerationStage } from '@/lib/generation/repository';
 import { createSandboxService } from '@/lib/sandbox/service/sandbox-service';
 import type { SandboxProvider } from '@/lib/sandbox/types';
+import { inferArtifactPackageNames, validateDependencies } from '@/lib/generation/validation/dependency-validator';
 
 declare global {
   var conversationState: ConversationState | null;
-  var activeSandboxProvider: any;
-  var existingFiles: Set<string>;
-  var sandboxState: SandboxState;
 }
 
 interface ParsedResponse {
@@ -74,6 +71,7 @@ export interface LiveApplyActivationFactoryInput {
   sandboxUrl: string;
   sandbox: ReturnType<typeof createProviderBackedSandboxService>;
   persistence: LiveApplyRoutePersistence;
+  dependencies: LiveDependencyMutation;
 }
 
 /**
@@ -340,7 +338,7 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
   return async function POST(request: NextRequest) {
   try {
     const requestBody = await request.json();
-    const { response, isEdit = false, packages = [], sandboxId } = requestBody;
+    const { response, isEdit = false, packages, sandboxId } = requestBody;
     const generationContextResult = GenerationContextSchema.safeParse(requestBody.generationContext);
 
     if (!generationContextResult.success) {
@@ -385,6 +383,20 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
         error: 'The generated candidate contains no safe application files.',
       }, { status: 400 });
     }
+    let candidatePackages: string[];
+    try {
+      const requestedPackages = normalizeRequestedPackages(packages);
+      candidatePackages = validateDependencies([
+        ...inferArtifactPackageNames(artifact),
+        ...requestedPackages,
+      ]).artifactPackages;
+      artifact = { ...artifact, packages: candidatePackages };
+      validateDependencies({ artifact, templateDependencies: [] });
+    } catch (error) {
+      return NextResponse.json({
+        error: `Invalid npm registry package in generated candidate: ${error instanceof Error ? error.message : String(error)}`,
+      }, { status: 400 });
+    }
     // Morph edits can target files outside the parsed artifact. Keep the live
     // rollback boundary exact by applying only the validated full-file candidate.
     const morphEnabled = false;
@@ -404,24 +416,15 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
     }
     console.log('[apply-ai-code-stream] Packages found:', parsed.packages);
 
-    // Initialize existingFiles if not already
-    if (!global.existingFiles) {
-      global.existingFiles = new Set<string>();
-    }
-
     // Tests can provide an isolated provider. Production continues through the
-    // existing sandbox-manager/reconnect/create flow below.
+    // sandbox-manager/reconnect/create flow below.
     let provider: SandboxProvider | null | undefined;
     if (overrides.resolveProvider) {
       provider = await overrides.resolveProvider({ sandboxId });
     } else {
-      // Try to get provider from sandbox manager first
-      provider = sandboxId ? sandboxManager.getProvider(sandboxId) : sandboxManager.getActiveProvider();
-
-      // Fall back to global state if not found in manager
-      if (!provider) {
-        provider = global.activeSandboxProvider;
-      }
+      // Resolve only the candidate sandbox; an active global provider can
+      // belong to a concurrent project and is never a valid fallback here.
+      provider = sandboxId ? sandboxManager.getProvider(sandboxId) : null;
 
       // If we have a sandboxId but no provider, try to get or create one
       if (!provider && sandboxId) {
@@ -438,8 +441,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
             sandboxManager.registerSandbox(sandboxId, provider);
           }
 
-          // Update legacy global state
-          global.activeSandboxProvider = provider;
           console.log(`[apply-ai-code-stream] Successfully got provider for sandbox ${sandboxId}`);
         } catch (providerError) {
           console.error(`[apply-ai-code-stream] Failed to get or create provider for sandbox ${sandboxId}:`, providerError);
@@ -471,13 +472,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
 
           // Register with sandbox manager
           sandboxManager.registerSandbox(sandboxInfo.sandboxId, provider);
-
-          // Store in legacy global state
-          global.activeSandboxProvider = provider;
-          global.sandboxData = {
-            sandboxId: sandboxInfo.sandboxId,
-            url: sandboxInfo.url
-          };
 
           console.log(`[apply-ai-code-stream] Created new sandbox successfully`);
         } catch (createError) {
@@ -548,7 +542,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
         errors: [] as string[]
       };
       let candidateMutation: ReturnType<typeof createLiveCandidateMutationBarrier> | undefined;
-      let legacyCandidateMutation: ReturnType<typeof snapshotLegacyCandidateMutationState> | undefined;
       let activationPromise: ReturnType<ReturnType<typeof createLiveValidationActivation>['activate']> | undefined;
       let activationPassed = false;
 
@@ -567,91 +560,14 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           }
         }
 
-        // Step 1: Install packages
-        const packagesArray = Array.isArray(packages) ? packages : [];
-        const parsedPackages = Array.isArray(parsed.packages) ? parsed.packages : [];
-
-        // Combine and deduplicate packages
-        const allPackages = [...packagesArray.filter(pkg => pkg && typeof pkg === 'string'), ...parsedPackages];
-
-        // Use Set to remove duplicates, then filter out pre-installed packages
-        const uniquePackages = [...new Set(allPackages)]
-          .filter(pkg => pkg && typeof pkg === 'string' && pkg.trim() !== '') // Remove empty strings
-          .filter(pkg => pkg !== 'react' && pkg !== 'react-dom'); // Filter pre-installed
-
-        // Log if we found duplicates
-        if (allPackages.length !== uniquePackages.length) {
-          console.log(`[apply-ai-code-stream] Removed ${allPackages.length - uniquePackages.length} duplicate packages`);
-          console.log(`[apply-ai-code-stream] Original packages:`, allPackages);
-          console.log(`[apply-ai-code-stream] Deduplicated packages:`, uniquePackages);
-        }
-
-        if (uniquePackages.length > 0) {
+        const dependencies = createLiveDependencyMutation({ provider: providerInstance });
+        if (candidatePackages.length > 0) {
           await sendProgress({
             type: 'step',
             step: 1,
-            message: `Installing ${uniquePackages.length} packages...`,
-            packages: uniquePackages
+            message: `Installing ${candidatePackages.length} packages...`,
+            packages: candidatePackages
           });
-
-          // Use streaming package installation
-          try {
-            // Construct the API URL properly for both dev and production
-            const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-            const host = req.headers.get('host') || 'localhost:3000';
-            const apiUrl = `${protocol}://${host}/api/install-packages`;
-
-            const installResponse = await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                packages: uniquePackages,
-                sandboxId: sandboxId || providerInstance.getSandboxInfo()?.sandboxId
-              })
-            });
-
-            if (installResponse.ok && installResponse.body) {
-              const reader = installResponse.body.getReader();
-              const decoder = new TextDecoder();
-
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                if (!chunk) continue;
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const data = JSON.parse(line.slice(6));
-
-                      // Forward package installation progress
-                      await sendProgress({
-                        type: 'package-progress',
-                        ...data
-                      });
-
-                      // Track results
-                      if (data.type === 'success' && data.installedPackages) {
-                        results.packagesInstalled = data.installedPackages;
-                      }
-                    } catch (parseError) {
-                      console.debug('Error parsing terminal output:', parseError);
-                    }
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            console.error('[apply-ai-code-stream] Error installing packages:', error);
-            await sendProgress({
-              type: 'warning',
-              message: `Package installation skipped (${(error as Error).message}). Continuing with file creation...`
-            });
-            results.errors.push(`Package installation failed: ${(error as Error).message}`);
-          }
         } else {
           await sendProgress({
             type: 'step',
@@ -680,15 +596,12 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           sandboxUrl: providerInfo.url,
           sandbox: sandboxService,
           persistence,
+          dependencies,
         }) ?? createDefaultLiveValidationActivation({
           provider: providerInstance as SandboxProvider,
           sandbox: sandboxService,
           persistence,
-        });
-        legacyCandidateMutation = snapshotLegacyCandidateMutationState({
-          sandboxState: global.sandboxState,
-          existingFiles: global.existingFiles,
-          paths: artifact.files.map((file) => file.path),
+          dependencies,
         });
         candidateMutation = createLiveCandidateMutationBarrier();
         activationPromise = activation.activate({
@@ -706,6 +619,7 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           },
           snapshotPaths: artifact.files.map((file) => file.path),
           applyCandidate: candidateMutation.applyCandidate,
+          rollbackCandidate: () => dependencies.rollback(),
         });
         // Snapshot/activation failures can occur before `applyCandidate`
         // signals the mutation barrier. Forward them immediately so the route
@@ -715,10 +629,16 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
         });
         await candidateMutation.waitUntilStarted();
 
+        if (candidatePackages.length > 0) {
+          const install = await dependencies.install(candidatePackages);
+          results.packagesInstalled.push(...install.installed);
+          results.packagesAlreadyInstalled.push(...install.alreadyInstalled);
+        }
+
         // If Morph is enabled and we have edits, apply them before file writes
         const morphUpdatedPaths = new Set<string>();
         if (morphEnabled && morphEdits.length > 0) {
-          const morphSandbox = (global as any).activeSandbox || providerInstance;
+          const morphSandbox = providerInstance;
           if (!morphSandbox) {
             console.warn('[apply-ai-code-stream] No sandbox available to apply Morph edits');
             await sendProgress({ type: 'warning', message: 'No sandbox available to apply Morph edits' });
@@ -793,7 +713,7 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
               normalizedPath = 'src/' + normalizedPath;
             }
 
-            const isUpdate = global.existingFiles.has(normalizedPath);
+            const isUpdate = false;
 
             // Remove any CSS imports from JSX/JS files (we're using Tailwind)
             let fileContent = file.content;
@@ -817,8 +737,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
               path: normalizedPath,
               content: fileContent,
             });
-
-            legacyCandidateMutation.recordWrite(normalizedPath, fileContent);
 
             if (isUpdate) {
               if (results.filesUpdated) results.filesUpdated.push(normalizedPath);
@@ -857,9 +775,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
         await sendProgress({ type: 'validation-started', message: 'Running deterministic live validation...' });
         candidateMutation.complete();
         const activationResult = await activationPromise;
-        if (activationResult.status === 'failed') {
-          legacyCandidateMutation.restore();
-        }
         const applicationPassed = await emitTerminalEvents({
           result: activationResult,
           send: sendProgress,
@@ -911,7 +826,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           try {
             const activationResult = await activationPromise;
             if (activationResult.status === 'failed') {
-              legacyCandidateMutation?.restore();
               await emitTerminalEvents({
                 result: activationResult,
                 send: sendProgress,
@@ -921,7 +835,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
             }
           } catch (activationError) {
             if (activationError instanceof LiveActivationPersistenceError) {
-              legacyCandidateMutation?.restore();
               await emitTerminalEvents({
                 result: activationError.result,
                 send: sendProgress,
@@ -934,7 +847,6 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           }
         }
         if (!emittedTerminalFailure && !activationPassed) {
-          legacyCandidateMutation?.restore();
           await sendProgress({
             type: 'error',
             error: 'The candidate could not be applied and validated safely.'
@@ -988,6 +900,14 @@ function toValidationArtifact(parsed: ParsedResponse): GenerationArtifact {
     files: normalizeGeneratedCandidateFiles(parsed.files),
     packages: parsed.packages,
   });
+}
+
+function normalizeRequestedPackages(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((packageName) => typeof packageName !== 'string')) {
+    throw new Error('Requested packages must be an array of npm package names.');
+  }
+  return value;
 }
 
 const SAFE_GENERATED_CANDIDATE_PATH = /^(?:src|public)\/[A-Za-z0-9][A-Za-z0-9._/-]*$|^index\.html$/;
@@ -1074,7 +994,7 @@ function createDefaultLiveApplyRoutePersistence(): LiveApplyRoutePersistence {
   };
 }
 
-function createDefaultLiveValidationActivation(input: Pick<LiveApplyActivationFactoryInput, 'provider' | 'sandbox' | 'persistence'>) {
+function createDefaultLiveValidationActivation(input: Pick<LiveApplyActivationFactoryInput, 'provider' | 'sandbox' | 'persistence' | 'dependencies'>) {
   const repository: GenerationRepairPersistence = {
     persistValidation: input.persistence.persistValidation,
     claimRepairAttempt: input.persistence.claimRepairAttempt,
@@ -1103,10 +1023,7 @@ function createDefaultLiveValidationActivation(input: Pick<LiveApplyActivationFa
         await input.sandbox.writeFiles(sandboxId, patch.files);
         const repairPackages = patch.packages ?? [];
         if (repairPackages.length > 0) {
-          const installResult = await input.provider.installPackages(repairPackages);
-          if (!installResult.success) {
-            throw new Error('The scoped repair dependencies could not be installed.');
-          }
+          await input.dependencies.install(repairPackages);
         }
         await input.provider.restartViteServer();
       },
