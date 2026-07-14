@@ -164,7 +164,7 @@ test('builder clears the active progress surface before reporting a non-terminal
   const applyStart = source.indexOf('const applyGeneratedCode = async (');
   const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
   const applyFlow = source.slice(applyStart, applyEnd);
-  const nonTerminalClose = applyFlow.indexOf('if (!applyErrorMessage)');
+  const nonTerminalClose = applyFlow.indexOf('if (!didReachApplyTerminal)');
   const clearState = applyFlow.indexOf('clearPendingApplyState(', nonTerminalClose);
   const reportError = applyFlow.indexOf("addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');", nonTerminalClose);
 
@@ -172,4 +172,17 @@ test('builder clears the active progress surface before reporting a non-terminal
   assert.ok(clearState > nonTerminalClose);
   assert.ok(reportError > clearState);
   assert.match(applyFlow, /const clearPendingApplyState = \(status: string\) => \{[\s\S]{0,900}setCodeApplicationState\(\{ stage: null \}\);[\s\S]{0,900}setLoadingStage\(null\);[\s\S]{0,900}setIsCapturingScreenshot\(false\);[\s\S]{0,900}setIsPreparingDesign\(false\);[\s\S]{0,900}isGenerating: false,[\s\S]{0,900}isStreaming: false,/);
+});
+
+test('builder buffers fragmented apply SSE frames until the terminal complete event is whole', () => {
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+
+  assert.match(source, /SseFrameBuffer/);
+  assert.match(applyFlow, /const sseFrames = new SseFrameBuffer\(\)/);
+  assert.match(applyFlow, /sseFrames\.append\(decoder\.decode\(value, \{ stream: true \}\)\)/);
+  assert.match(applyFlow, /sseFrames\.append\(decoder\.decode\(\)\)/);
+  assert.match(applyFlow, /let didReachApplyTerminal = false/);
+  assert.match(applyFlow, /didReachApplyTerminal = true/);
 });

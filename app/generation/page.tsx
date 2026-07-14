@@ -28,6 +28,7 @@ import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
 import { GenerationProgressSurface, type GenerationProgressPhase } from '@/components/generation/GenerationProgressSurface';
 import { resolveGenerationIntent } from '@/lib/generation-intent.js';
+import { SseFrameBuffer } from './sse-frame-buffer';
 import styles from './builder.module.css';
 
 interface SandboxData {
@@ -979,20 +980,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Handle streaming response
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
+      const sseFrames = new SseFrameBuffer();
       let finalData: any = null;
       let applyErrorMessage: string | null = null;
-      
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
+      let didReachApplyTerminal = false;
+
+      const processApplyFrame = (frame: { event?: string; data: string }) => {
+        try {
+          const data = JSON.parse(frame.data);
+          if (!data.type && frame.event) {
+            data.type = frame.event;
+          }
               
               switch (data.type) {
                 case 'start':
@@ -1091,6 +1089,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                 case 'complete':
                   finalData = data;
                   applicationPassed = true;
+                  didReachApplyTerminal = true;
                   setCodeApplicationState({ stage: 'complete' });
                   // Clear the state after a delay
                   setTimeout(() => {
@@ -1102,6 +1101,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   
                 case 'error':
                   applyErrorMessage = data.message || data.error || 'Unknown error';
+                  didReachApplyTerminal = true;
                   if (iframeRef.current) {
                     iframeRef.current.src = iframeRef.current.src;
                   }
@@ -1122,11 +1122,28 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   }
                   break;
               }
-            } catch {
-              // Ignore parse errors
-            }
-          }
+        } catch (error) {
+          console.error('Failed to parse apply SSE frame:', error);
         }
+      };
+
+      while (reader) {
+        const { done, value } = await reader.read();
+        const frames = done
+          ? sseFrames.append(decoder.decode())
+          : sseFrames.append(decoder.decode(value, { stream: true }));
+
+        for (const frame of frames) {
+          processApplyFrame(frame);
+        }
+
+        if (done) break;
+      }
+
+      if (!didReachApplyTerminal) {
+        clearPendingApplyState('Code application ended before validation completed.');
+        addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');
+        return false;
       }
       
       // Process final data
@@ -1400,10 +1417,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       } else {
         // A terminal apply error is authoritative: keep the old preview rather
         // than implying that an unvalidated candidate may have succeeded.
-        if (!applyErrorMessage) {
-          clearPendingApplyState('Code application ended before validation completed.');
-          addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');
-        }
+        if (!applyErrorMessage) throw new Error('Apply stream ended without a terminal result.');
       }
     } catch (error: any) {
       clearPendingApplyState(error.message || 'Failed to apply code');
