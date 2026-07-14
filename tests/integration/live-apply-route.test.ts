@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import test from "node:test";
+
+import { POST as applyGeneratedCandidate } from "../../app/api/apply-ai-code-stream/route";
+
+const candidate = '<file path="src/App.jsx">export default function App() { return <main>Ready</main>; }</file>';
+
+test("apply route rejects an unscoped generated candidate", async () => {
+  const response = await applyGeneratedCandidate(new Request("http://localhost/api/apply-ai-code-stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ response: candidate, sandboxId: "sandbox-1" }),
+  }) as never);
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /generation context/i);
+});
+
+test("apply stream is activation-gated and only completes after a passed report", () => {
+  const source = readFileSync(resolve(process.cwd(), "app/api/apply-ai-code-stream/route.ts"), "utf8");
+
+  assert.match(source, /GenerationContextSchema\.safeParse/);
+  assert.match(source, /createLiveValidationActivation/);
+  assert.match(source, /type:\s*["']validation-started["']/);
+  assert.match(source, /type:\s*["']validation-report["']/);
+  assert.match(source, /activationResult\.status\s*===\s*["']passed["']/);
+  assert.match(source, /type:\s*["']complete["']/);
+});
+
+test("live apply configures the one scoped repair path before activation", () => {
+  const source = readFileSync(resolve(process.cwd(), "app/api/apply-ai-code-stream/route.ts"), "utf8");
+
+  assert.match(source, /repair:\s*\{\s*generatePatch:/s);
+  assert.match(source, /applyPatch:\s*async/);
+  assert.match(source, /sandboxService\.writeFiles/);
+  assert.match(source, /providerInstance\.restartViteServer/);
+});
+
+test("generation stream emits candidate-ready instead of terminal complete", () => {
+  const source = readFileSync(resolve(process.cwd(), "app/api/generate-ai-code-stream/route.ts"), "utf8");
+
+  assert.match(source, /type:\s*["']candidate-ready["']/);
+  assert.doesNotMatch(source, /type:\s*["']complete["']/);
+});

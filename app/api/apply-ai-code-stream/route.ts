@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 import { parseMorphEdits, applyMorphEditToFile } from '@/lib/morph-fast-apply';
 // Sandbox import not needed - using global sandbox from sandbox-manager
 import type { SandboxState } from '@/types/sandbox';
 import type { ConversationState } from '@/types/conversation';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
+import { getLanguageModel } from '@/lib/ai/provider-manager';
+import { resolveModelRoute } from '@/lib/models/registry';
+import { createGenerationOrchestrator } from '@/lib/generation/orchestration/generation-orchestrator';
+import type { GenerationRepairPersistence } from '@/lib/generation/orchestration/generation-orchestrator';
+import { createLiveValidationActivation } from '@/lib/generation/live/live-validation-activation';
+import { createProductionValidationDependencies } from '@/lib/generation/live/production-validation';
+import { GenerationArtifactSchema, type GenerationArtifact, type ValidationReport } from '@/lib/generation/contracts/validation';
+import { createGeneration, getGeneration, claimGenerationRepairAttempt, persistGenerationTerminalValidation, saveGenerationPayload, setGenerationSandboxId, updateGenerationStage } from '@/lib/generation/repository';
+import { createSandboxService } from '@/lib/sandbox/service/sandbox-service';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
   var conversationState: ConversationState | null;
@@ -263,9 +276,19 @@ function parseAIResponse(response: string): ParsedResponse {
 
 export async function POST(request: NextRequest) {
   try {
-    const { response, isEdit = false, packages = [], sandboxId } = await request.json();
+    const requestBody = await request.json();
+    const { response, isEdit = false, packages = [], sandboxId } = requestBody;
+    const generationContextResult = GenerationContextSchema.safeParse(requestBody.generationContext);
 
-    if (!response) {
+    if (!generationContextResult.success) {
+      return NextResponse.json({
+        error: 'A validated generation context is required before applying generated code.',
+        issues: generationContextResult.error.issues,
+      }, { status: 400 });
+    }
+    const generationContext = generationContextResult.data;
+
+    if (typeof response !== 'string' || !response.trim()) {
       return NextResponse.json({
         error: 'response is required'
       }, { status: 400 });
@@ -280,7 +303,15 @@ export async function POST(request: NextRequest) {
 
     // Parse the AI response
     const parsed = parseAIResponse(response);
-    const morphEnabled = Boolean(isEdit && process.env.MORPH_API_KEY);
+    const artifact = toValidationArtifact(parsed);
+    if (artifact.files.length === 0) {
+      return NextResponse.json({
+        error: 'The generated candidate contains no safe application files.',
+      }, { status: 400 });
+    }
+    // Morph edits can target files outside the parsed artifact. Keep the live
+    // rollback boundary exact by applying only the validated full-file candidate.
+    const morphEnabled = false;
     const morphEdits = morphEnabled ? parseMorphEdits(response) : [];
     console.log('[apply-ai-code-stream] Morph Fast Apply mode:', morphEnabled);
     if (morphEnabled) {
@@ -386,6 +417,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const providerInfo = provider.getSandboxInfo();
+    if (!providerInfo) {
+      return NextResponse.json({
+        error: 'The sandbox provider has no active sandbox information.',
+      }, { status: 500 });
+    }
+
+    const liveSandboxId = providerInfo.sandboxId;
+    const generation = await resolveGeneration(generationContext);
+    const brief = { contentFacts: [], allowedPlaceholders: [] };
+    const plan = { primaryCta: null, declaredPackages: artifact.packages };
+    await Promise.all([
+      setGenerationSandboxId(generation.id, liveSandboxId),
+      saveGenerationPayload(generation.id, 'artifact_json', artifact),
+      saveGenerationPayload(generation.id, 'brief_json', brief),
+      saveGenerationPayload(generation.id, 'plan_json', plan),
+      updateGenerationStage(generation.id, 'applying', 'running'),
+    ]);
+
     // Create a response stream for real-time updates
     const encoder = new TextEncoder();
     const stream = new TransformStream();
@@ -408,6 +458,10 @@ export async function POST(request: NextRequest) {
         commandsExecuted: [] as string[],
         errors: [] as string[]
       };
+      let beginCandidateMutation: (() => void) | undefined;
+      let resolveCandidateMutation: (() => void) | undefined;
+      let rejectCandidateMutation: ((reason?: unknown) => void) | undefined;
+      let activationPromise: ReturnType<ReturnType<typeof createLiveValidationActivation>['activate']> | undefined;
 
       try {
         await sendProgress({
@@ -517,21 +571,91 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // Step 2: Create/update files
-        const filesArray = Array.isArray(parsed.files) ? parsed.files : [];
+        // Step 2: create/update only the validated candidate paths. Package
+        // installation deliberately remains outside the rollback boundary.
+        const filesArray = artifact.files;
         await sendProgress({
           type: 'step',
           step: 2,
           message: `Creating ${filesArray.length} files...`
         });
 
-        // Filter out config files that shouldn't be created
-        const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
-        let filteredFiles = filesArray.filter(file => {
-          if (!file || typeof file !== 'object') return false;
-          const fileName = (file.path || '').split('/').pop() || '';
-          return !configFiles.includes(fileName);
+        // The durable artifact parser already excludes configuration files.
+        const configFiles: string[] = [];
+        let filteredFiles = [...filesArray];
+
+        const sandboxService = createProviderBackedSandboxService(providerInstance as SandboxProvider, liveSandboxId);
+        const repository: GenerationRepairPersistence = {
+          persistValidation: async ({ generationId, report, status }) => {
+            await persistGenerationTerminalValidation(generationId, report);
+            await updateGenerationStage(generationId, 'completed', status);
+          },
+          claimRepairAttempt: async (generationId) => {
+            const claimed = await claimGenerationRepairAttempt(generationId);
+            return claimed ? { id: claimed.id, repairCount: claimed.repairCount } : null;
+          },
+        };
+        const repairModel = getLanguageModel(resolveModelRoute('repair'));
+        const orchestrator = createGenerationOrchestrator({
+          validation: createProductionValidationDependencies({
+            sandbox: sandboxService,
+            captureOutput: async () => ({ output: { kind: 'live-output-capture-not-retained' } }),
+            readPng: async () => {
+              throw new Error('Durable screenshot artifacts are unavailable for this live apply.');
+            },
+          }),
+          repository,
+          repair: {
+            generatePatch: async (context) => {
+              const result = await generateObject({
+                model: repairModel,
+                schema: GenerationArtifactSchema,
+                system: 'You are G Studio\'s scoped repair worker. Return only a structured patch for the supplied failed files and safe npm packages.',
+                prompt: context.prompt,
+              });
+              return result.object;
+            },
+            applyPatch: async ({ sandboxId, patch }) => {
+              await sandboxService.writeFiles(sandboxId, patch.files);
+              const repairPackages = patch.packages ?? [];
+              if (repairPackages.length > 0) {
+                const installResult = await providerInstance.installPackages(repairPackages);
+                if (!installResult.success) {
+                  throw new Error('The scoped repair dependencies could not be installed.');
+                }
+              }
+              await providerInstance.restartViteServer();
+            },
+          },
         });
+        const activation = createLiveValidationActivation({ sandbox: sandboxService, orchestrator });
+        const candidateCanStart = new Promise<void>((resolve) => {
+          beginCandidateMutation = resolve;
+        });
+        const candidateMutationComplete = new Promise<void>((resolve, reject) => {
+          resolveCandidateMutation = resolve;
+          rejectCandidateMutation = reject;
+        });
+        activationPromise = activation.activate({
+          artifact,
+          brief,
+          plan,
+          mode: generationContext.mode,
+          sandboxId: liveSandboxId,
+          sandboxUrl: providerInfo.url,
+          desktopWidth: 1440,
+          generation: {
+            id: generation.id,
+            projectId: generation.projectId,
+            repairCount: generation.repairCount,
+          },
+          snapshotPaths: artifact.files.map((file) => file.path),
+          applyCandidate: async () => {
+            beginCandidateMutation?.();
+            await candidateMutationComplete;
+          },
+        });
+        await candidateCanStart;
 
         // If Morph is enabled and we have edits, apply them before file writes
         const morphUpdatedPaths = new Set<string>();
@@ -669,80 +793,52 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Step 3: Execute commands
-        const commandsArray = Array.isArray(parsed.commands) ? parsed.commands : [];
-        if (commandsArray.length > 0) {
+        // Generated shell commands are not inside the validated file artifact,
+        // so they are intentionally not executed by the rollbackable live apply.
+        if (parsed.commands.length > 0) {
           await sendProgress({
-            type: 'step',
-            step: 3,
-            message: `Executing ${commandsArray.length} commands...`
+            type: 'warning',
+            message: 'Generated shell commands were skipped because live validation only applies the scoped file artifact.',
           });
-
-          for (const [index, cmd] of commandsArray.entries()) {
-            try {
-              await sendProgress({
-                type: 'command-progress',
-                current: index + 1,
-                total: parsed.commands.length,
-                command: cmd,
-                action: 'executing'
-              });
-
-              // Use provider runCommand
-              const result = await providerInstance.runCommand(cmd);
-
-              // Get command output from provider result
-              const stdout = result.stdout;
-              const stderr = result.stderr;
-
-              if (stdout) {
-                await sendProgress({
-                  type: 'command-output',
-                  command: cmd,
-                  output: stdout,
-                  stream: 'stdout'
-                });
-              }
-
-              if (stderr) {
-                await sendProgress({
-                  type: 'command-output',
-                  command: cmd,
-                  output: stderr,
-                  stream: 'stderr'
-                });
-              }
-
-              if (results.commandsExecuted) {
-                results.commandsExecuted.push(cmd);
-              }
-
-              await sendProgress({
-                type: 'command-complete',
-                command: cmd,
-                exitCode: result.exitCode,
-                success: result.exitCode === 0
-              });
-            } catch (error) {
-              if (results.errors) {
-                results.errors.push(`Failed to execute ${cmd}: ${(error as Error).message}`);
-              }
-              await sendProgress({
-                type: 'command-error',
-                command: cmd,
-                error: (error as Error).message
-              });
-            }
-          }
         }
 
-        // Send final results
+        await providerInstance.restartViteServer();
+        await sendProgress({ type: 'validation-started', message: 'Running deterministic live validation...' });
+        resolveCandidateMutation?.();
+        const activationResult = await activationPromise;
+        await sendProgress({
+          type: 'validation-report',
+          report: activationResult.report,
+          status: activationResult.status,
+          message: activationResult.status === 'passed'
+            ? 'Deterministic validation passed.'
+            : safeValidationReason(activationResult.report),
+        });
+
+        if (activationResult.status !== 'passed') {
+          await sendProgress({ type: 'rollback-started', message: 'Restoring the previous sandbox files...' });
+          await sendProgress({
+            type: 'rollback-complete',
+            rolledBack: activationResult.rolledBack,
+            message: activationResult.rolledBack
+              ? 'Previous sandbox files restored.'
+              : 'Rollback could not be confirmed.',
+          });
+          await sendProgress({
+            type: 'error',
+            error: safeValidationReason(activationResult.report),
+            report: activationResult.report,
+          });
+          return;
+        }
+
         await sendProgress({
           type: 'complete',
           results,
           explanation: parsed.explanation,
           structure: parsed.structure,
-          message: `Successfully applied ${results.filesCreated.length} files`
+          validation: activationResult.report,
+          message: `Successfully applied and validated ${results.filesCreated.length + results.filesUpdated.length} files`,
         });
 
         // Track applied files in conversation state
@@ -771,9 +867,31 @@ export async function POST(request: NextRequest) {
         }
 
       } catch (error) {
+        rejectCandidateMutation?.(error);
+        if (activationPromise) {
+          try {
+            const activationResult = await activationPromise;
+            await sendProgress({
+              type: 'validation-report',
+              report: activationResult.report,
+              status: activationResult.status,
+              message: safeValidationReason(activationResult.report),
+            });
+            await sendProgress({ type: 'rollback-started', message: 'Restoring the previous sandbox files...' });
+            await sendProgress({
+              type: 'rollback-complete',
+              rolledBack: activationResult.rolledBack,
+              message: activationResult.rolledBack
+                ? 'Previous sandbox files restored.'
+                : 'Rollback could not be confirmed.',
+            });
+          } catch (activationError) {
+            console.error('[apply-ai-code-stream] Live activation failed:', activationError);
+          }
+        }
         await sendProgress({
           type: 'error',
-          error: (error as Error).message
+          error: 'The candidate could not be applied and validated safely.'
         });
       } finally {
         await writer.close();
@@ -796,4 +914,71 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** A candidate cannot mutate a sandbox without a durable generation record. */
+const GenerationContextSchema = z.object({
+  generationId: z.string().uuid().optional(),
+  projectId: z.string().min(1),
+  mode: z.enum(['scratch', 'edit', 'inspiration', 'clone']),
+  prompt: z.string().min(1),
+  targetUrl: z.string().url().nullable(),
+});
+
+type GenerationContext = z.infer<typeof GenerationContextSchema>;
+
+function safeValidationReason(report: ValidationReport): string {
+  if (report.repairEligibility?.failureClass === 'capture-policy') {
+    return 'Reference evidence is required before this candidate can be applied.';
+  }
+  if (report.repairEligibility?.failureClass === 'sandbox-infrastructure') {
+    return 'The sandbox could not complete deterministic validation.';
+  }
+  return 'The candidate did not pass deterministic validation.';
+}
+
+function toValidationArtifact(parsed: ParsedResponse): GenerationArtifact {
+  return GenerationArtifactSchema.parse({
+    files: parsed.files.filter((file) => /^(?:src|public)\/[A-Za-z0-9][A-Za-z0-9._/-]*$|^index\.html$/.test(file.path)),
+    packages: parsed.packages,
+  });
+}
+
+function createProviderBackedSandboxService(provider: SandboxProvider, sandboxId: string) {
+  return createSandboxService({
+    providers: {
+      allocate: async () => {
+        throw new Error('Live apply uses an existing sandbox and cannot allocate a second sandbox.');
+      },
+      connect: async (requestedSandboxId) => {
+        if (requestedSandboxId !== sandboxId) {
+          throw new Error('Live apply attempted to validate a different sandbox.');
+        }
+        return provider;
+      },
+    },
+    leases: {},
+  });
+}
+
+async function resolveGeneration(context: GenerationContext) {
+  if (context.generationId) {
+    const existing = await getGeneration(context.generationId);
+    if (!existing) {
+      throw new Error('The requested generation record does not exist.');
+    }
+    if (existing.projectId !== context.projectId) {
+      throw new Error('The requested generation does not belong to this project.');
+    }
+    return existing;
+  }
+
+  return createGeneration({
+    id: randomUUID(),
+    projectId: context.projectId,
+    mode: context.mode,
+    prompt: context.prompt,
+    targetUrl: context.targetUrl,
+    userId: null,
+  });
 }

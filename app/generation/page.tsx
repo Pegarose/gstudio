@@ -26,6 +26,7 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import { GenerationProgressSurface, type GenerationProgressPhase } from '@/components/generation/GenerationProgressSurface';
 import { resolveGenerationIntent } from '@/lib/generation-intent.js';
 import styles from './builder.module.css';
 
@@ -33,6 +34,56 @@ interface SandboxData {
   sandboxId: string;
   url: string;
   [key: string]: any;
+}
+
+interface ApplyGenerationContext {
+  projectId: string;
+  generationId?: string;
+  mode: 'scratch' | 'edit' | 'inspiration' | 'clone';
+  prompt: string;
+  targetUrl: string | null;
+}
+
+function toGenerationProgressPhase({
+  loadingStage,
+  isCapturingScreenshot,
+  isPreparingDesign,
+  generationStatus,
+  isGenerating,
+  isStreaming,
+  codeApplicationStage,
+}: {
+  loadingStage: 'gathering' | 'planning' | 'generating' | null;
+  isCapturingScreenshot: boolean;
+  isPreparingDesign: boolean;
+  generationStatus: string;
+  isGenerating: boolean;
+  isStreaming: boolean;
+  codeApplicationStage: CodeApplicationState['stage'];
+}): GenerationProgressPhase {
+  const normalizedStatus = generationStatus.toLowerCase();
+
+  if (normalizedStatus.includes('validation') || normalizedStatus.includes('restoring')) {
+    return 'verify';
+  }
+
+  if (codeApplicationStage && codeApplicationStage !== 'complete') {
+    return 'apply';
+  }
+
+  if (isCapturingScreenshot || loadingStage === 'gathering') {
+    return 'understand';
+  }
+
+  if (isPreparingDesign || loadingStage === 'planning') {
+    return 'plan';
+  }
+
+  if (isGenerating || isStreaming || loadingStage === 'generating') {
+    return 'build';
+  }
+
+  return 'workspace';
 }
 
 interface ChatMessage {
@@ -848,7 +899,22 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
   };
 
-  const applyGeneratedCode = async (code: string, isEdit: boolean = false, overrideSandboxData?: SandboxData) => {
+  const createApplyGenerationContext = (input: Omit<ApplyGenerationContext, 'projectId'>): ApplyGenerationContext => {
+    const projectId = activeProjectId ?? Number(sessionStorage.getItem('projectId'));
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      throw new Error('A project is required before generated code can be applied.');
+    }
+
+    return { ...input, projectId: String(projectId) };
+  };
+
+  const applyGeneratedCode = async (
+    code: string,
+    isEdit: boolean = false,
+    overrideSandboxData?: SandboxData,
+    generationContext?: ApplyGenerationContext,
+  ): Promise<boolean> => {
+    let applicationPassed = false;
     setLoading(true);
     log('Applying AI-generated code...');
     
@@ -873,6 +939,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       // Use streaming endpoint for real-time feedback
       const effectiveSandboxData = overrideSandboxData || sandboxData;
+      const scopedGenerationContext = generationContext ?? createApplyGenerationContext({
+        mode: isEdit ? 'edit' : 'scratch',
+        prompt: aiChatInput.trim() || 'Apply generated candidate',
+        targetUrl: null,
+      });
       const response = await fetch('/api/apply-ai-code-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -881,7 +952,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           response: code,
           isEdit: isEdit,
           packages: pendingPackages,
-          sandboxId: effectiveSandboxData?.sandboxId // Pass the sandbox ID to ensure proper connection
+          sandboxId: effectiveSandboxData?.sandboxId, // Pass the sandbox ID to ensure proper connection
+          generationContext: scopedGenerationContext,
         })
       });
       
@@ -893,6 +965,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let finalData: any = null;
+      let applyErrorMessage: string | null = null;
       
       while (reader) {
         const { done, value } = await reader.read();
@@ -910,6 +983,27 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                 case 'start':
                   // Don't add as chat message, just update state
                   setCodeApplicationState({ stage: 'analyzing' });
+                  break;
+
+                case 'validation-started':
+                  setCodeApplicationState({ stage: 'applying', message: data.message });
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Running deterministic validation...' }));
+                  break;
+
+                case 'validation-report':
+                  setCodeApplicationState(prev => ({ ...prev, stage: 'applying', message: data.message }));
+                  setGenerationProgress(prev => ({
+                    ...prev,
+                    status: `Validation report: ${data.message || 'Deterministic checks completed'}`,
+                  }));
+                  break;
+
+                case 'rollback-started':
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Restoring previous sandbox files...' }));
+                  break;
+
+                case 'rollback-complete':
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Rollback completed' }));
                   break;
                   
                 case 'step':
@@ -981,6 +1075,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   
                 case 'complete':
                   finalData = data;
+                  applicationPassed = true;
                   setCodeApplicationState({ stage: 'complete' });
                   // Clear the state after a delay
                   setTimeout(() => {
@@ -991,7 +1086,18 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   break;
                   
                 case 'error':
-                  addChatMessage(`Error: ${data.message || data.error || 'Unknown error'}`, 'system');
+                  applyErrorMessage = data.message || data.error || 'Unknown error';
+                  if (iframeRef.current) {
+                    iframeRef.current.src = iframeRef.current.src;
+                  }
+                  addChatMessage(`Validation failed: ${applyErrorMessage}`, 'error');
+                  setCodeApplicationState({ stage: null });
+                  setGenerationProgress(prev => ({
+                    ...prev,
+                    isGenerating: false,
+                    isStreaming: false,
+                    status: data.message || data.error || 'Validation failed',
+                  }));
                   // Reset loading state on error
                   setLoading(false);
                   break;
@@ -1283,11 +1389,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           throw new Error(finalData?.error || 'Failed to apply code');
         }
       } else {
-        // If no final data was received, still close loading
-        addChatMessage('Code application may have partially succeeded. Check the preview.', 'system');
+        // A terminal apply error is authoritative: keep the old preview rather
+        // than implying that an unvalidated candidate may have succeeded.
+        if (!applyErrorMessage) {
+          addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');
+        }
       }
     } catch (error: any) {
       log(`Failed to apply code: ${error.message}`, 'error');
+      addChatMessage(`Validation failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
       // Clear isEdit flag after applying code
@@ -1296,6 +1406,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         isEdit: false
       }));
     }
+    return applicationPassed;
   };
 
   const fetchHistory = async () => {
@@ -1471,8 +1582,45 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //   };
 
   const hasProjectPreview = generationProgress.files.length > 0 || conversationContext.appliedCode.length > 0;
+  const isGenerationProgressActive = Boolean(
+    loadingStage ||
+    isCapturingScreenshot ||
+    isPreparingDesign ||
+    generationProgress.isGenerating ||
+    generationProgress.isStreaming ||
+    (codeApplicationState.stage && codeApplicationState.stage !== 'complete'),
+  );
+  const generationProgressSurface = (
+    <GenerationProgressSurface
+      phase={toGenerationProgressPhase({
+        loadingStage,
+        isCapturingScreenshot,
+        isPreparingDesign,
+        generationStatus: generationProgress.status,
+        isGenerating: generationProgress.isGenerating,
+        isStreaming: generationProgress.isStreaming,
+        codeApplicationStage: codeApplicationState.stage,
+      })}
+      status={generationProgress.status || 'Preparing your workspace'}
+      detail={codeApplicationState.message || generationProgress.currentFile?.path}
+      targetLabel={targetUrl || homeUrlInput || undefined}
+    />
+  );
 
   const renderMainContent = () => {
+
+    if (
+      activeTab === 'generation' &&
+      isGenerationProgressActive &&
+      generationProgress.files.length === 0 &&
+      !generationProgress.currentFile
+    ) {
+      return (
+        <div className="flex h-full min-w-0 items-center justify-center bg-neutral-50 p-4 dark:bg-neutral-950 sm:p-6">
+          {generationProgressSurface}
+        </div>
+      );
+    }
 
     if (activeTab === 'generation' && (generationProgress.isGenerating || generationProgress.files.length > 0)) {
       return (
@@ -1885,37 +2033,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               />
             )}
             
-            {/* Loading overlay - only show when actively processing initial generation */}
             {shouldShowLoadingOverlay && (
-              <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center backdrop-blur-sm">
-                {/* Loading animation with skeleton */}
-                <div className="text-center max-w-md">
-                  {/* Animated skeleton lines */}
-                  <div className="mb-6 space-y-3">
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0s' }} />
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse w-4/5 mx-auto" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0.2s' }} />
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse w-3/5 mx-auto" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0.4s' }} />
-                  </div>
-                  
-                  {/* Status text */}
-                  <p className="text-white text-lg font-medium">
-                    {isCapturingScreenshot ? 'Analyzing website...' :
-                     isPreparingDesign ? 'Preparing design...' :
-                     generationProgress.isGenerating ? 'Generating code...' :
-                     'Loading...'}
-                  </p>
-                  
-                  {/* Subtle progress hint */}
-                  <p className="text-white/60 text-sm mt-2">
-                    {isCapturingScreenshot ? 'Taking a screenshot of the site' :
-                     isPreparingDesign ? 'Understanding the layout and structure' :
-                     generationProgress.isGenerating ? 'Writing React components' :
-                     'Please wait...'}
-                  </p>
-                </div>
+              <div className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 p-4 backdrop-blur-sm sm:p-6">
+                {generationProgressSurface}
               </div>
             )}
           </div>
@@ -2003,64 +2123,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               </button>
             </div>
             
-            {/* Package installation overlay - shows when installing packages or applying code */}
-            {codeApplicationState.stage && codeApplicationState.stage !== 'complete' && (
-              <div className="absolute inset-0 bg-white/95 backdrop-blur-sm flex items-center justify-center z-10">
-                <div className="text-center max-w-md">
-                  <div className="mb-6">
-                    {/* Animated icon based on stage */}
-                    {codeApplicationState.stage === 'installing' ? (
-                      <div className="w-16 h-16 mx-auto">
-                        <svg className="w-full h-full animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </div>
-                    ) : null}
-                  </div>
-                  
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    {codeApplicationState.stage === 'analyzing' && 'Analyzing code...'}
-                    {codeApplicationState.stage === 'installing' && 'Installing packages...'}
-                    {codeApplicationState.stage === 'applying' && 'Applying changes...'}
-                  </h3>
-                  
-                  {/* Package list during installation */}
-                  {codeApplicationState.stage === 'installing' && codeApplicationState.packages && (
-                    <div className="mb-4">
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {codeApplicationState.packages.map((pkg, index) => (
-                          <span 
-                            key={index}
-                            className={`px-2 py-1 text-xs rounded-full transition-all ${
-                              codeApplicationState.installedPackages?.includes(pkg)
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}
-                          >
-                            {pkg}
-                            {codeApplicationState.installedPackages?.includes(pkg) && (
-                              <span className="ml-1">✓</span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Files being generated */}
-                  {codeApplicationState.stage === 'applying' && codeApplicationState.filesGenerated && (
-                    <div className="text-sm text-gray-600">
-                      Creating {codeApplicationState.filesGenerated.length} files...
-                    </div>
-                  )}
-                  
-                  <p className="text-sm text-gray-500 mt-2">
-                    {codeApplicationState.stage === 'analyzing' && 'Parsing generated code and detecting dependencies...'}
-                    {codeApplicationState.stage === 'installing' && 'This may take a moment while npm installs the required packages...'}
-                    {codeApplicationState.stage === 'applying' && 'Writing files to your sandbox environment...'}
-                  </p>
-                </div>
+            {isGenerationProgressActive && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-neutral-50/80 p-4 backdrop-blur-sm dark:bg-neutral-950/80 sm:p-6">
+                {generationProgressSurface}
               </div>
             )}
             
@@ -2095,7 +2160,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Default state when no sandbox and no screenshot
       return (
         <div className="flex items-center justify-center h-full bg-gray-50 text-gray-600 text-lg">
-          {screenshotError ? (
+          {isGenerationProgressActive ? generationProgressSurface : screenshotError ? (
             <div className="text-center">
               <p className="mb-2">Failed to capture screenshot</p>
               <p className="text-sm text-gray-500">{screenshotError}</p>
@@ -2424,7 +2489,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       ? `Quality gate passed after ${data.repairCount} repair`
                       : "Quality gate passed",
                   }));
-                } else if (data.type === 'complete') {
+                } else if (data.type === 'candidate-ready') {
                   generatedCode = data.generatedCode;
                   explanation = data.explanation;
                   
@@ -2474,7 +2539,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   setGenerationProgress(prev => ({
                     ...prev,
                     status: `Generated ${parsedFiles.length > 0 ? parsedFiles.length : prev.files.length} file${(parsedFiles.length > 0 ? parsedFiles.length : prev.files.length) !== 1 ? 's' : ''}!`,
-                    isGenerating: false,
+                    isGenerating: true,
                     isStreaming: false,
                     isEdit: prev.isEdit,
                     // Keep the files that were already parsed during streaming
@@ -2541,17 +2606,29 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           }
         }
         
-        if (activeSandboxData && generatedCode) {
-          // For new sandbox creations (especially Vercel), add a delay to ensure Vite is ready
-          if (sandboxCreating) {
-            console.log('[startGeneration] New sandbox created, waiting for services to be ready...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-          
-          // Use isEdit flag that was determined at the start
-          // Pass the sandbox data from the promise if it's different from the state
-          await applyGeneratedCode(generatedCode, isEdit, activeSandboxData !== sandboxData ? activeSandboxData : undefined);
+        if (!activeSandboxData) {
+          throw new Error('A sandbox is required before generated code can be applied.');
         }
+
+        // For new sandbox creations (especially Vercel), add a delay to ensure Vite is ready
+        if (sandboxCreating) {
+          console.log('[startGeneration] New sandbox created, waiting for services to be ready...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        const applicationPassed = await applyGeneratedCode(
+          generatedCode,
+          isEdit,
+          activeSandboxData !== sandboxData ? activeSandboxData : undefined,
+          createApplyGenerationContext({
+            mode: isEdit ? 'edit' : 'scratch',
+            prompt: finalPrompt,
+            targetUrl: null,
+          }),
+        );
+        if (!applicationPassed) return;
+      } else {
+        throw new Error('Failed to generate a candidate.');
       }
       
       // Show completion status briefly then switch to preview
@@ -3690,7 +3767,7 @@ Focus on the key sections and content, making it clean and modern.`;
                         ? `Quality gate passed after ${data.repairCount} repair`
                         : "Quality gate passed",
                     }));
-                  } else if (data.type === 'complete') {
+                  } else if (data.type === 'candidate-ready') {
                     generatedCode = data.generatedCode;
                     explanation = data.explanation;
                   
@@ -3705,20 +3782,21 @@ Focus on the key sections and content, making it clean and modern.`;
         }
       }
         
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: 'Generation complete!'
-        }));
-        
         if (generatedCode) {
-          addChatMessage('AI recreation generated!', 'system');
-          
           setPromptInput(generatedCode);
 
-          // Apply the code (first time is not edit mode)
-          await applyGeneratedCode(generatedCode, false, activeSandboxData);
+          const applicationPassed = await applyGeneratedCode(
+            generatedCode,
+            false,
+            activeSandboxData,
+            createApplyGenerationContext({
+              mode: isFromScratch ? 'scratch' : isInspirationMode ? 'inspiration' : 'clone',
+              prompt: homeContextInput.trim() || prompt,
+              targetUrl: isFromScratch ? null : url,
+            }),
+          );
+
+          if (!applicationPassed) return;
 
           const successContent = isInspirationMode
             ? `Built an original application using visual direction extracted from ${cleanUrl}. You can now refine the layout, content, or interactions.`

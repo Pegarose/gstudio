@@ -1796,9 +1796,10 @@ Provide the complete file content without any truncation. Include all necessary 
           message: "Quality gate passed",
         });
 
-        // Send completion with packages info
-        await sendProgress({ 
-          type: 'complete', 
+        // A generated candidate is available for application; terminal success
+        // belongs exclusively to the live apply/validation stream.
+        await sendProgress({
+          type: 'candidate-ready',
           generatedCode,
           explanation,
           files: files.length,

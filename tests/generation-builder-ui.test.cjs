@@ -98,5 +98,38 @@ test('auto-start waits for the explicit sandbox and carries its ID through apply
   assert.match(source, /Promise\.resolve\(sandboxData\)/);
   assert.match(source, /const activeSandboxData = createdSandbox \|\| sandboxData/);
   assert.match(source, /sandboxId: activeSandboxData\?\.sandboxId/);
-  assert.match(source, /applyGeneratedCode\(generatedCode, false, activeSandboxData\)/);
+  assert.match(source, /applyGeneratedCode\(\s*generatedCode,\s*false,\s*activeSandboxData,/s);
+});
+
+test('builder keeps candidate generation distinct from validated apply completion', () => {
+  const chatGenerationStart = source.indexOf('const sendChatMessage = async () =>');
+  const chatGenerationEnd = source.indexOf('const downloadZip = async () =>', chatGenerationStart);
+  const chatGeneration = source.slice(chatGenerationStart, chatGenerationEnd);
+  const initialGenerationStart = source.indexOf('const startGeneration = async () =>');
+  const initialGenerationEnd = source.indexOf('\n  return (', initialGenerationStart);
+  const initialGeneration = source.slice(initialGenerationStart, initialGenerationEnd);
+
+  assert.match(source, /data\.type === ['"]candidate-ready['"]/);
+  assert.match(source, /case ['"]validation-report['"]/);
+  assert.match(source, /case ['"]complete['"]/);
+  assert.match(source, /const applicationPassed = await applyGeneratedCode/);
+  assert.match(source, /generationContext: scopedGenerationContext/);
+  assert.doesNotMatch(chatGeneration, /data\.type === ['"]complete['"]\)\s*\{\s*generatedCode/);
+  assert.doesNotMatch(initialGeneration, /data\.type === ['"]complete['"]\)\s*\{\s*generatedCode/);
+  assert.doesNotMatch(initialGeneration, /AI recreation generated![\s\S]{0,240}await applyGeneratedCode/);
+  assert.match(chatGeneration, /if \(generatedCode\)[\s\S]{0,3400}else \{\s*throw new Error\(['"]Failed to generate a candidate/);
+});
+
+test('builder renders the truthful progress surface only from existing live state', () => {
+  assert.match(source, /GenerationProgressSurface/);
+  assert.match(source, /toGenerationProgressPhase/);
+  assert.match(source, /isGenerationProgressActive/);
+  assert.match(source, /phase=\{toGenerationProgressPhase\(/);
+  assert.match(source, /case ['"]validation-report['"][\s\S]{0,280}Validation report:/);
+  assert.match(source, /case ['"]error['"][\s\S]{0,280}iframeRef\.current\.src = iframeRef\.current\.src/);
+  assert.match(source, /loadingStage/);
+  assert.match(source, /isCapturingScreenshot/);
+  assert.match(source, /isPreparingDesign/);
+  assert.match(source, /generationProgress/);
+  assert.match(source, /codeApplicationState/);
 });
