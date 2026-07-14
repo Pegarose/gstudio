@@ -2538,7 +2538,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   
                   setGenerationProgress(prev => ({
                     ...prev,
-                    status: `Generated ${parsedFiles.length > 0 ? parsedFiles.length : prev.files.length} file${(parsedFiles.length > 0 ? parsedFiles.length : prev.files.length) !== 1 ? 's' : ''}!`,
+                    status: 'Candidate ready. Applying it and running deterministic validation…',
                     isGenerating: true,
                     isStreaming: false,
                     isEdit: prev.isEdit,
@@ -2567,15 +2567,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           for (let i = newMessages.length - 1; i >= 0; i--) {
             if (newMessages[i].type === 'ai') {
               const defaultText = isEdit && generatedFiles.length > 0
-                ? `Updated ${generatedFiles.map(f => f.split('/').pop()).join(', ')}`
-                : 'Code generated!';
+                ? `Candidate ready for ${generatedFiles.map(f => f.split('/').pop()).join(', ')}. Applying it and running deterministic validation…`
+                : 'Candidate ready. Applying it and running deterministic validation…';
               newMessages[i] = {
                 ...newMessages[i],
-                content: explanation || newMessages[i].content || defaultText,
-                metadata: {
-                  ...newMessages[i].metadata,
-                  appliedFiles: isEdit && generatedFiles.length > 0 ? [generatedFiles[0]] : generatedFiles
-                }
+                content: defaultText,
               };
               break;
             }
@@ -3770,6 +3766,14 @@ Focus on the key sections and content, making it clean and modern.`;
                   } else if (data.type === 'candidate-ready') {
                     generatedCode = data.generatedCode;
                     explanation = data.explanation;
+
+                    setGenerationProgress((previous) => ({
+                      ...previous,
+                      status: 'Candidate ready. Applying it and running deterministic validation…',
+                      isGenerating: true,
+                      isStreaming: false,
+                      isThinking: false,
+                    }));
                   
                   // Save the last generated code
                   setConversationContext(prev => ({
@@ -4268,9 +4272,7 @@ Focus on the key sections and content, making it clean and modern.`;
             )}
             {chatMessages.map((msg, idx) => {
               // Check if this message is from a successful generation
-              const isGenerationComplete = msg.content.includes('Successfully recreated') || 
-                                         msg.content.includes('AI recreation generated!') ||
-                                         msg.content.includes('Code generated!');
+              const isGenerationComplete = msg.content.includes('Successfully recreated');
               
               // Get the files from metadata if this is a completion message
               // const completedFiles = msg.metadata?.appliedFiles || [];

@@ -120,6 +120,32 @@ test('builder keeps candidate generation distinct from validated apply completio
   assert.match(chatGeneration, /if \(generatedCode\)[\s\S]{0,3400}else \{\s*throw new Error\(['"]Failed to generate a candidate/);
 });
 
+test('builder treats a generated candidate as pending until the apply terminal completes', () => {
+  const chatGenerationStart = source.indexOf('const sendChatMessage = async () =>');
+  const chatGenerationEnd = source.indexOf('const downloadZip = async () =>', chatGenerationStart);
+  const chatGeneration = source.slice(chatGenerationStart, chatGenerationEnd);
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+  const candidateIndex = chatGeneration.indexOf('Candidate ready. Applying it and running deterministic validation…');
+  const applicationPassedIndex = chatGeneration.indexOf('const applicationPassed = await applyGeneratedCode', candidateIndex);
+  const applyCompleteIndex = applyFlow.indexOf("case 'complete':");
+  const applicationPassedAssignment = applyFlow.indexOf('applicationPassed = true', applyCompleteIndex);
+  const applyErrorStart = applyFlow.indexOf("case 'error':");
+  const applyErrorEnd = applyFlow.indexOf("case 'warning':", applyErrorStart);
+  const applyError = applyFlow.slice(applyErrorStart, applyErrorEnd);
+
+  assert.ok(candidateIndex >= 0);
+  assert.ok(applicationPassedIndex > candidateIndex);
+  assert.ok(applyCompleteIndex >= 0);
+  assert.ok(applicationPassedAssignment > applyCompleteIndex);
+  assert.doesNotMatch(chatGeneration, /Code generated!/);
+  assert.doesNotMatch(source, /Code generated!/);
+  assert.doesNotMatch(chatGeneration, /appliedFiles:\s*isEdit/);
+  assert.match(applyError, /addChatMessage\(`Validation failed: \$\{applyErrorMessage\}`, 'error'\)/);
+  assert.doesNotMatch(applyError, /successfully|Code generated|Applied \$\{/i);
+});
+
 test('builder renders the truthful progress surface only from existing live state', () => {
   assert.match(source, /GenerationProgressSurface/);
   assert.match(source, /toGenerationProgressPhase/);

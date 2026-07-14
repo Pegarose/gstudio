@@ -21,12 +21,15 @@ test("apply route rejects an unscoped generated candidate", async () => {
 
 test("apply stream is activation-gated and only completes after a passed report", () => {
   const source = readFileSync(resolve(process.cwd(), "app/api/apply-ai-code-stream/route.ts"), "utf8");
+  const terminalSource = readFileSync(resolve(process.cwd(), "lib/generation/live/live-apply-terminal.ts"), "utf8");
 
   assert.match(source, /GenerationContextSchema\.safeParse/);
   assert.match(source, /createLiveValidationActivation/);
   assert.match(source, /type:\s*["']validation-started["']/);
-  assert.match(source, /type:\s*["']validation-report["']/);
-  assert.match(source, /activationResult\.status\s*===\s*["']passed["']/);
+  assert.match(source, /emitLiveActivationTerminalEvents/);
+  assert.match(terminalSource, /type:\s*["']validation-report["']/);
+  assert.match(terminalSource, /input\.result\.status\s*===\s*["']passed["']/);
+  assert.match(source, /if \(!applicationPassed\) \{\s*return;/);
   assert.match(source, /type:\s*["']complete["']/);
 });
 
@@ -37,6 +40,15 @@ test("live apply configures the one scoped repair path before activation", () =>
   assert.match(source, /applyPatch:\s*async/);
   assert.match(source, /sandboxService\.writeFiles/);
   assert.match(source, /providerInstance\.restartViteServer/);
+});
+
+test("route delegates provider writes to the rollback-aware live apply seam", () => {
+  const source = readFileSync(resolve(process.cwd(), "app/api/apply-ai-code-stream/route.ts"), "utf8");
+
+  assert.match(source, /writeLiveCandidateFile/);
+  assert.match(source, /await writeLiveCandidateFile\(\{[\s\S]*provider: providerInstance/s);
+  assert.match(source, /emitLiveActivationTerminalEvents/);
+  assert.match(source, /candidateMutation\?\.fail\(error\);[\s\S]{0,220}await activationPromise/s);
 });
 
 test("generation stream emits candidate-ready instead of terminal complete", () => {

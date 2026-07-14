@@ -13,6 +13,11 @@ import { createGenerationOrchestrator } from '@/lib/generation/orchestration/gen
 import type { GenerationRepairPersistence } from '@/lib/generation/orchestration/generation-orchestrator';
 import { createLiveValidationActivation } from '@/lib/generation/live/live-validation-activation';
 import { createProductionValidationDependencies } from '@/lib/generation/live/production-validation';
+import {
+  createLiveCandidateMutationBarrier,
+  emitLiveActivationTerminalEvents,
+  writeLiveCandidateFile,
+} from '@/lib/generation/live/live-apply-terminal';
 import { GenerationArtifactSchema, type GenerationArtifact, type ValidationReport } from '@/lib/generation/contracts/validation';
 import { createGeneration, getGeneration, claimGenerationRepairAttempt, persistGenerationTerminalValidation, saveGenerationPayload, setGenerationSandboxId, updateGenerationStage } from '@/lib/generation/repository';
 import { createSandboxService } from '@/lib/sandbox/service/sandbox-service';
@@ -458,9 +463,7 @@ export async function POST(request: NextRequest) {
         commandsExecuted: [] as string[],
         errors: [] as string[]
       };
-      let beginCandidateMutation: (() => void) | undefined;
-      let resolveCandidateMutation: (() => void) | undefined;
-      let rejectCandidateMutation: ((reason?: unknown) => void) | undefined;
+      let candidateMutation: ReturnType<typeof createLiveCandidateMutationBarrier> | undefined;
       let activationPromise: ReturnType<ReturnType<typeof createLiveValidationActivation>['activate']> | undefined;
 
       try {
@@ -629,13 +632,7 @@ export async function POST(request: NextRequest) {
           },
         });
         const activation = createLiveValidationActivation({ sandbox: sandboxService, orchestrator });
-        const candidateCanStart = new Promise<void>((resolve) => {
-          beginCandidateMutation = resolve;
-        });
-        const candidateMutationComplete = new Promise<void>((resolve, reject) => {
-          resolveCandidateMutation = resolve;
-          rejectCandidateMutation = reject;
-        });
+        candidateMutation = createLiveCandidateMutationBarrier();
         activationPromise = activation.activate({
           artifact,
           brief,
@@ -650,12 +647,9 @@ export async function POST(request: NextRequest) {
             repairCount: generation.repairCount,
           },
           snapshotPaths: artifact.files.map((file) => file.path),
-          applyCandidate: async () => {
-            beginCandidateMutation?.();
-            await candidateMutationComplete;
-          },
+          applyCandidate: candidateMutation.applyCandidate,
         });
-        await candidateCanStart;
+        await candidateMutation.waitUntilStarted();
 
         // If Morph is enabled and we have edits, apply them before file writes
         const morphUpdatedPaths = new Set<string>();
@@ -752,14 +746,13 @@ export async function POST(request: NextRequest) {
               fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
             }
 
-            // Create directory if needed
-            const dirPath = normalizedPath.includes('/') ? normalizedPath.substring(0, normalizedPath.lastIndexOf('/')) : '';
-            if (dirPath) {
-              await providerInstance.runCommand(`mkdir -p ${dirPath}`);
-            }
-
-            // Write the file using provider
-            await providerInstance.writeFile(normalizedPath, fileContent);
+            // A provider write rejection must reach the activation boundary so
+            // the candidate is rolled back and persisted as terminally failed.
+            await writeLiveCandidateFile({
+              provider: providerInstance,
+              path: normalizedPath,
+              content: fileContent,
+            });
 
             // Update file cache
             if (global.sandboxState?.fileCache) {
@@ -790,6 +783,7 @@ export async function POST(request: NextRequest) {
               fileName: file.path,
               error: (error as Error).message
             });
+            throw error;
           }
         }
 
@@ -804,31 +798,14 @@ export async function POST(request: NextRequest) {
 
         await providerInstance.restartViteServer();
         await sendProgress({ type: 'validation-started', message: 'Running deterministic live validation...' });
-        resolveCandidateMutation?.();
+        candidateMutation.complete();
         const activationResult = await activationPromise;
-        await sendProgress({
-          type: 'validation-report',
-          report: activationResult.report,
-          status: activationResult.status,
-          message: activationResult.status === 'passed'
-            ? 'Deterministic validation passed.'
-            : safeValidationReason(activationResult.report),
+        const applicationPassed = await emitLiveActivationTerminalEvents({
+          result: activationResult,
+          send: sendProgress,
+          failureMessage: safeValidationReason(activationResult.report),
         });
-
-        if (activationResult.status !== 'passed') {
-          await sendProgress({ type: 'rollback-started', message: 'Restoring the previous sandbox files...' });
-          await sendProgress({
-            type: 'rollback-complete',
-            rolledBack: activationResult.rolledBack,
-            message: activationResult.rolledBack
-              ? 'Previous sandbox files restored.'
-              : 'Rollback could not be confirmed.',
-          });
-          await sendProgress({
-            type: 'error',
-            error: safeValidationReason(activationResult.report),
-            report: activationResult.report,
-          });
+        if (!applicationPassed) {
           return;
         }
 
@@ -867,32 +844,29 @@ export async function POST(request: NextRequest) {
         }
 
       } catch (error) {
-        rejectCandidateMutation?.(error);
+        candidateMutation?.fail(error);
+        let emittedTerminalFailure = false;
         if (activationPromise) {
           try {
             const activationResult = await activationPromise;
-            await sendProgress({
-              type: 'validation-report',
-              report: activationResult.report,
-              status: activationResult.status,
-              message: safeValidationReason(activationResult.report),
-            });
-            await sendProgress({ type: 'rollback-started', message: 'Restoring the previous sandbox files...' });
-            await sendProgress({
-              type: 'rollback-complete',
-              rolledBack: activationResult.rolledBack,
-              message: activationResult.rolledBack
-                ? 'Previous sandbox files restored.'
-                : 'Rollback could not be confirmed.',
-            });
+            if (activationResult.status === 'failed') {
+              await emitLiveActivationTerminalEvents({
+                result: activationResult,
+                send: sendProgress,
+                failureMessage: safeValidationReason(activationResult.report),
+              });
+              emittedTerminalFailure = true;
+            }
           } catch (activationError) {
             console.error('[apply-ai-code-stream] Live activation failed:', activationError);
           }
         }
-        await sendProgress({
-          type: 'error',
-          error: 'The candidate could not be applied and validated safely.'
-        });
+        if (!emittedTerminalFailure) {
+          await sendProgress({
+            type: 'error',
+            error: 'The candidate could not be applied and validated safely.'
+          });
+        }
       } finally {
         await writer.close();
       }
