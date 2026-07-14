@@ -1,0 +1,236 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { PNG } from "pngjs";
+
+import {
+  VisualComparisonError,
+  evaluateVisualFidelity,
+} from "../../lib/generation/validation/visual-evaluator";
+import * as visualEvaluator from "../../lib/generation/validation/visual-evaluator";
+import { createVisualFixtures, replacePixel, solidPng } from "../fixtures/visual/visual-fixtures";
+
+test("visual evaluation compares canonical desktop and mobile captures and returns separate diff artifacts", () => {
+  const { source, output } = createVisualFixtures();
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.equal(result.structure, 1);
+  assert.equal(result.typography, 1);
+  assert.equal(result.color, 1);
+  assert.equal(result.spacing, 1);
+  assert.equal(result.responsive, 1);
+  assert.equal(result.screenshot, 1);
+  assert.equal(result.viewports.desktop.screenshot, 1);
+  assert.equal(result.viewports.mobile.screenshot, 1);
+  assert.equal(result.diffArtifacts.desktop.mediaType, "image/png");
+  assert.equal(PNG.sync.read(result.diffArtifacts.mobile.data).width, 5);
+});
+
+test("a typography mismatch does not hide behind a good screenshot score", () => {
+  const { source, output } = createVisualFixtures();
+  for (const layout of [output.desktopLayout, output.mobileLayout]) {
+    layout.typography = [{
+      role: "h1",
+      fontFamily: "Inter",
+      fontSize: 32,
+      fontWeight: 700,
+      lineHeight: 56,
+    }];
+  }
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.equal(result.screenshot, 1);
+  assert.ok(result.typography < 0.6);
+  assert.equal(result.structure, 1);
+});
+
+test("landmark order and normalized bounding boxes determine the structural score", () => {
+  const { source, output } = createVisualFixtures();
+  for (const layout of [output.desktopLayout, output.mobileLayout]) {
+    layout.landmarks = [
+      { ...layout.landmarks[1], box: { x: layout.viewport.width * 0.1, y: layout.viewport.height * 0.2, width: layout.viewport.width * 0.8, height: layout.viewport.height * 0.5 } },
+      layout.landmarks[0],
+      layout.landmarks[2],
+    ];
+  }
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.ok(result.structure < 0.7);
+  assert.equal(result.typography, 1);
+  assert.equal(result.screenshot, 1);
+});
+
+test("token color histograms are scored independently from spacing", () => {
+  const { source, output } = createVisualFixtures();
+  for (const layout of [output.desktopLayout, output.mobileLayout]) {
+    layout.colors[1] = { token: "ink", value: "#ff0000", weight: 0.2 };
+  }
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.ok(result.color < 0.6);
+  assert.equal(result.spacing, 1);
+  assert.equal(result.screenshot, 1);
+});
+
+test("normalized gaps and padding are scored independently from colors", () => {
+  const { source, output } = createVisualFixtures();
+  for (const layout of [output.desktopLayout, output.mobileLayout]) {
+    layout.spacing[0] = {
+      id: "hero",
+      gap: 4,
+      padding: { top: 4, right: 4, bottom: 4, left: 4 },
+    };
+  }
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.ok(result.spacing < 0.6);
+  assert.equal(result.color, 1);
+  assert.equal(result.screenshot, 1);
+});
+
+test("responsive evidence records breakpoint regressions separately", () => {
+  const { source, output } = createVisualFixtures();
+  for (const layout of [output.desktopLayout, output.mobileLayout]) {
+    layout.responsive[0] = {
+      width: 320,
+      horizontalOverflow: true,
+      landmarkOrder: ["hero", "header", "action"],
+      columns: 2,
+    };
+  }
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.ok(result.responsive < 0.5);
+  assert.equal(result.screenshot, 1);
+});
+
+test("both source and output reject each missing required mobile responsive width", () => {
+  for (const side of ["source", "output"] as const) {
+    for (const missingWidth of [375, 414, 768]) {
+      const { source, output } = createVisualFixtures();
+      for (const layout of side === "source"
+        ? [source.desktopLayout, source.mobileLayout]
+        : [output.desktopLayout, output.mobileLayout]) {
+        layout.responsive = layout.responsive.filter((item) => item.width !== missingWidth);
+      }
+
+      assert.throws(
+        () => evaluateVisualFidelity({ source, output }),
+        /Missing required responsive width/,
+      );
+    }
+  }
+});
+
+test("duplicate responsive width evidence is rejected instead of being scored as a complete set", () => {
+  const { source, output } = createVisualFixtures();
+  source.desktopLayout.responsive.push({ ...source.desktopLayout.responsive[0] });
+
+  assert.throws(
+    () => evaluateVisualFidelity({ source, output }),
+    /Duplicate responsive width/,
+  );
+});
+
+test("desktop responsive evidence must be one width of at least 1024 pixels", () => {
+  const { source, output } = createVisualFixtures();
+  source.mobileLayout.responsive[4] = {
+    ...source.mobileLayout.responsive[4],
+    width: 1023,
+  };
+
+  assert.throws(
+    () => evaluateVisualFidelity({ source, output }),
+    /Desktop responsive width must be at least 1024px/,
+  );
+});
+
+test("a declared dynamic mask removes only the masked screenshot difference", () => {
+  const { source, output } = createVisualFixtures();
+  output.desktopScreenshot.png = replacePixel(output.desktopScreenshot.png, 0, 0, [255, 0, 0, 255]);
+
+  const unmasked = evaluateVisualFidelity({ source, output });
+  assert.ok(unmasked.viewports.desktop.screenshot < 1);
+
+  source.desktopScreenshot.masks = [{ x: 0, y: 0, width: 1, height: 1 }];
+  const masked = evaluateVisualFidelity({ source, output });
+  assert.equal(masked.viewports.desktop.screenshot, 1);
+  assert.equal(masked.viewports.mobile.screenshot, 1);
+});
+
+test("mobile screenshot differences lower only the mobile screenshot result", () => {
+  const { source, output } = createVisualFixtures();
+  output.mobileScreenshot.png = replacePixel(output.mobileScreenshot.png, 0, 0, [255, 0, 0, 255]);
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.equal(result.viewports.desktop.screenshot, 1);
+  assert.ok(result.viewports.mobile.screenshot < 1);
+});
+
+test("equal CSS viewports with different device-pixel ratios are normalized before comparison", () => {
+  const { source, output } = createVisualFixtures();
+  source.desktopScreenshot = {
+    png: solidPng(20, 20, [255, 255, 255, 255]),
+    viewport: { width: 10, height: 10, devicePixelRatio: 2 },
+  };
+
+  const result = evaluateVisualFidelity({ source, output });
+
+  assert.equal(result.viewports.desktop.screenshot, 1);
+  assert.equal(PNG.sync.read(result.diffArtifacts.desktop.data).width, 10);
+});
+
+test("different mobile screenshot aspect ratios are rejected instead of stretched into a match", () => {
+  const { source, output } = createVisualFixtures();
+  output.mobileScreenshot = {
+    png: solidPng(6, 10, [255, 255, 255, 255]),
+    viewport: { width: 6, height: 10, devicePixelRatio: 1 },
+  };
+
+  assert.throws(
+    () => evaluateVisualFidelity({ source, output }),
+    (error: unknown) => error instanceof VisualComparisonError && error.code === "aspect-ratio-mismatch",
+  );
+});
+
+test("a pure adapter reads canonical captured images through an injected PNG reader", async () => {
+  const { source, output } = createVisualFixtures();
+  const pngByArtifactKey = new Map([
+    ["source-desktop", source.desktopScreenshot.png],
+    ["source-mobile", source.mobileScreenshot.png],
+    ["output-desktop", output.desktopScreenshot.png],
+    ["output-mobile", output.mobileScreenshot.png],
+  ]);
+  const adaptCapturedVisualEvidence = (visualEvaluator as typeof visualEvaluator & {
+    adaptCapturedVisualEvidence: (input: unknown, reader: {
+      readPng(image: { artifactKey: string }): Promise<Buffer>;
+    }) => Promise<{
+      desktopScreenshot: { png: Buffer };
+      mobileScreenshot: { png: Buffer };
+    }>;
+  }).adaptCapturedVisualEvidence;
+  const reader = {
+    async readPng(image: { artifactKey: string }): Promise<Buffer> {
+      const png = pngByArtifactKey.get(image.artifactKey);
+      assert.ok(png, `missing PNG fixture for ${image.artifactKey}`);
+      return Buffer.from(png);
+    },
+  };
+
+  const adapted = await adaptCapturedVisualEvidence({
+    desktopScreenshot: { artifactKey: "source-desktop", mediaType: "image/png", ...source.desktopScreenshot.viewport },
+    mobileScreenshot: { artifactKey: "source-mobile", mediaType: "image/png", ...source.mobileScreenshot.viewport },
+    desktopLayout: source.desktopLayout,
+    mobileLayout: source.mobileLayout,
+  }, reader);
+
+  assert.deepEqual(adapted.desktopScreenshot.png, source.desktopScreenshot.png);
+  assert.deepEqual(adapted.mobileScreenshot.png, source.mobileScreenshot.png);
+});

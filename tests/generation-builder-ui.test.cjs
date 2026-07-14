@@ -4,6 +4,23 @@ const { resolve } = require('node:path');
 const test = require('node:test');
 
 const builderPage = resolve(__dirname, '../app/generation/page.tsx');
+const dashboard = readFileSync(resolve(__dirname, '../app/page.tsx'), 'utf8');
+const source = readFileSync(builderPage, 'utf8');
+
+test('dashboard and builder normalize role-specific TR4 model selections', () => {
+  assert.match(dashboard, /normalizeTeamModel\("planning"/);
+  assert.match(dashboard, /normalizeTeamModel\("coder"/);
+  assert.match(dashboard, /normalizeTeamModel\("qa"/);
+  assert.match(dashboard, /selectedQaModel/);
+  assert.match(source, /teamModelOptions\.planning/);
+  assert.match(source, /teamModelOptions\.coder/);
+  assert.match(source, /teamModelOptions\.qa/);
+  assert.match(source, /normalizeTeamModel\('planning', storedPlanningModel\)/);
+  assert.match(source, /normalizeTeamModel\('coder', storedCoderModel\)/);
+  assert.match(source, /normalizeTeamModel\('qa', storedQaModel\)/);
+  assert.match(source, /normalizeTeamModel\('planning', data\.project\.planning_model\)/);
+  assert.match(source, /generationMode,/);
+});
 
 test('builder exposes a task-focused workspace instead of browser-like chrome', () => {
   const source = readFileSync(builderPage, 'utf8');
@@ -44,4 +61,128 @@ test('builder workspace owns its typography instead of inheriting a serif fallba
   assert.match(source, /\.agentButton/);
   assert.match(source, /\.modeButton/);
   assert.match(source, /\.composerSubmit/);
+});
+
+test('builder creates a project before requesting an explicit-ID sandbox', () => {
+  const source = readFileSync(builderPage, 'utf8');
+
+  assert.match(source, /projectIdForSandbox/);
+  assert.match(source, /sessionStorage\.setItem\('projectId', String\(regData\.project\.id\)\)/);
+  assert.match(source, /createSandbox\(true, projectIdForSandbox\)/);
+  assert.match(source, /projectId: String\(projectId\)/);
+  assert.doesNotMatch(source, /body: JSON\.stringify\(\{\}\)/);
+});
+
+test('builder reports a passed generation quality gate', () => {
+  assert.match(source, /data\.type === ["']validation["']/);
+  assert.match(source, /Quality gate passed/);
+  assert.match(source, /repairCount/);
+});
+
+test('chat generation stream propagates terminal SSE errors after parsing', () => {
+  const chatStreamStart = source.indexOf("const response = await fetch('/api/generate-ai-code-stream'");
+  const chatStreamEnd = source.indexOf('if (generatedCode) {', chatStreamStart);
+  const chatStream = source.slice(chatStreamStart, chatStreamEnd);
+
+  assert.match(
+    chatStream,
+    /let data: any;\s*try \{\s*data = JSON\.parse\(line\.slice\(6\)\);\s*\} catch \(e\) \{\s*console\.error\('Failed to parse SSE data:', e\);\s*continue;\s*\}\s*if \(data\.type === 'error'\) \{\s*throw new Error\(data\.error \|\| data\.message/,
+  );
+});
+
+test('auto-start waits for the explicit sandbox and carries its ID through apply', () => {
+  const source = readFileSync(builderPage, 'utf8');
+
+  assert.match(source, /autoStart === 'true' && !showHomeScreen && homeUrlInput && sandboxData/);
+  assert.match(source, /\[showHomeScreen, homeUrlInput, sandboxData\]/);
+  assert.match(source, /Promise\.resolve\(sandboxData\)/);
+  assert.match(source, /const activeSandboxData = createdSandbox \|\| sandboxData/);
+  assert.match(source, /sandboxId: activeSandboxData\?\.sandboxId/);
+  assert.match(source, /applyGeneratedCode\(\s*generatedCode,\s*false,\s*activeSandboxData,/s);
+});
+
+test('builder keeps candidate generation distinct from validated apply completion', () => {
+  const chatGenerationStart = source.indexOf('const sendChatMessage = async () =>');
+  const chatGenerationEnd = source.indexOf('const downloadZip = async () =>', chatGenerationStart);
+  const chatGeneration = source.slice(chatGenerationStart, chatGenerationEnd);
+  const initialGenerationStart = source.indexOf('const startGeneration = async () =>');
+  const initialGenerationEnd = source.indexOf('\n  return (', initialGenerationStart);
+  const initialGeneration = source.slice(initialGenerationStart, initialGenerationEnd);
+
+  assert.match(source, /data\.type === ['"]candidate-ready['"]/);
+  assert.match(source, /case ['"]validation-report['"]/);
+  assert.match(source, /case ['"]complete['"]/);
+  assert.match(source, /const applicationPassed = await applyGeneratedCode/);
+  assert.match(source, /generationContext: scopedGenerationContext/);
+  assert.doesNotMatch(chatGeneration, /data\.type === ['"]complete['"]\)\s*\{\s*generatedCode/);
+  assert.doesNotMatch(initialGeneration, /data\.type === ['"]complete['"]\)\s*\{\s*generatedCode/);
+  assert.doesNotMatch(initialGeneration, /AI recreation generated![\s\S]{0,240}await applyGeneratedCode/);
+  assert.match(chatGeneration, /if \(generatedCode\)[\s\S]{0,3400}else \{\s*throw new Error\(['"]Failed to generate a candidate/);
+});
+
+test('builder treats a generated candidate as pending until the apply terminal completes', () => {
+  const chatGenerationStart = source.indexOf('const sendChatMessage = async () =>');
+  const chatGenerationEnd = source.indexOf('const downloadZip = async () =>', chatGenerationStart);
+  const chatGeneration = source.slice(chatGenerationStart, chatGenerationEnd);
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+  const candidateIndex = chatGeneration.indexOf('Candidate ready. Applying it and running deterministic validation…');
+  const applicationPassedIndex = chatGeneration.indexOf('const applicationPassed = await applyGeneratedCode', candidateIndex);
+  const applyCompleteIndex = applyFlow.indexOf("case 'complete':");
+  const applicationPassedAssignment = applyFlow.indexOf('applicationPassed = true', applyCompleteIndex);
+  const applyErrorStart = applyFlow.indexOf("case 'error':");
+  const applyErrorEnd = applyFlow.indexOf("case 'warning':", applyErrorStart);
+  const applyError = applyFlow.slice(applyErrorStart, applyErrorEnd);
+
+  assert.ok(candidateIndex >= 0);
+  assert.ok(applicationPassedIndex > candidateIndex);
+  assert.ok(applyCompleteIndex >= 0);
+  assert.ok(applicationPassedAssignment > applyCompleteIndex);
+  assert.doesNotMatch(chatGeneration, /Code generated!/);
+  assert.doesNotMatch(source, /Code generated!/);
+  assert.doesNotMatch(chatGeneration, /appliedFiles:\s*isEdit/);
+  assert.match(applyError, /addChatMessage\(`Validation failed: \$\{applyErrorMessage\}`, 'error'\)/);
+  assert.doesNotMatch(applyError, /successfully|Code generated|Applied \$\{/i);
+});
+
+test('builder renders the truthful progress surface only from existing live state', () => {
+  assert.match(source, /GenerationProgressSurface/);
+  assert.match(source, /toGenerationProgressPhase/);
+  assert.match(source, /isGenerationProgressActive/);
+  assert.match(source, /phase=\{toGenerationProgressPhase\(/);
+  assert.match(source, /case ['"]validation-report['"][\s\S]{0,280}Validation report:/);
+  assert.match(source, /case ['"]error['"][\s\S]{0,280}iframeRef\.current\.src = iframeRef\.current\.src/);
+  assert.match(source, /loadingStage/);
+  assert.match(source, /isCapturingScreenshot/);
+  assert.match(source, /isPreparingDesign/);
+  assert.match(source, /generationProgress/);
+  assert.match(source, /codeApplicationState/);
+});
+
+test('builder clears the active progress surface before reporting a non-terminal apply stream close', () => {
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+  const nonTerminalClose = applyFlow.indexOf('if (!didReachApplyTerminal)');
+  const clearState = applyFlow.indexOf('clearPendingApplyState(', nonTerminalClose);
+  const reportError = applyFlow.indexOf("addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');", nonTerminalClose);
+
+  assert.ok(nonTerminalClose >= 0);
+  assert.ok(clearState > nonTerminalClose);
+  assert.ok(reportError > clearState);
+  assert.match(applyFlow, /const clearPendingApplyState = \(status: string\) => \{[\s\S]{0,900}setCodeApplicationState\(\{ stage: null \}\);[\s\S]{0,900}setLoadingStage\(null\);[\s\S]{0,900}setIsCapturingScreenshot\(false\);[\s\S]{0,900}setIsPreparingDesign\(false\);[\s\S]{0,900}isGenerating: false,[\s\S]{0,900}isStreaming: false,/);
+});
+
+test('builder buffers fragmented apply SSE frames until the terminal complete event is whole', () => {
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+
+  assert.match(source, /SseFrameBuffer/);
+  assert.match(applyFlow, /const sseFrames = new SseFrameBuffer\(\)/);
+  assert.match(applyFlow, /sseFrames\.append\(decoder\.decode\(value, \{ stream: true \}\)\)/);
+  assert.match(applyFlow, /sseFrames\.append\(decoder\.decode\(\)\)/);
+  assert.match(applyFlow, /let didReachApplyTerminal = false/);
+  assert.match(applyFlow, /didReachApplyTerminal = true/);
 });

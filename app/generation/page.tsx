@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Image from 'next/image';
 import { appConfig } from '@/config/app.config';
+import { normalizeTeamModel } from '@/lib/models/team-model-policy';
 import HeroInput from '@/components/HeroInput';
 import HeaderBrandKit from '@/components/shared/header/BrandKit/BrandKit';
 import { HeaderProvider } from '@/components/shared/header/HeaderContext';
@@ -25,13 +26,65 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import { GenerationProgressSurface, type GenerationProgressPhase } from '@/components/generation/GenerationProgressSurface';
 import { resolveGenerationIntent } from '@/lib/generation-intent.js';
+import { SseFrameBuffer } from './sse-frame-buffer';
 import styles from './builder.module.css';
 
 interface SandboxData {
   sandboxId: string;
   url: string;
   [key: string]: any;
+}
+
+interface ApplyGenerationContext {
+  projectId: string;
+  generationId?: string;
+  mode: 'scratch' | 'edit' | 'inspiration' | 'clone';
+  prompt: string;
+  targetUrl: string | null;
+}
+
+function toGenerationProgressPhase({
+  loadingStage,
+  isCapturingScreenshot,
+  isPreparingDesign,
+  generationStatus,
+  isGenerating,
+  isStreaming,
+  codeApplicationStage,
+}: {
+  loadingStage: 'gathering' | 'planning' | 'generating' | null;
+  isCapturingScreenshot: boolean;
+  isPreparingDesign: boolean;
+  generationStatus: string;
+  isGenerating: boolean;
+  isStreaming: boolean;
+  codeApplicationStage: CodeApplicationState['stage'];
+}): GenerationProgressPhase {
+  const normalizedStatus = generationStatus.toLowerCase();
+
+  if (normalizedStatus.includes('validation') || normalizedStatus.includes('restoring')) {
+    return 'verify';
+  }
+
+  if (codeApplicationStage && codeApplicationStage !== 'complete') {
+    return 'apply';
+  }
+
+  if (isCapturingScreenshot || loadingStage === 'gathering') {
+    return 'understand';
+  }
+
+  if (isPreparingDesign || loadingStage === 'planning') {
+    return 'plan';
+  }
+
+  if (isGenerating || isStreaming || loadingStage === 'generating') {
+    return 'build';
+  }
+
+  return 'workspace';
 }
 
 interface ChatMessage {
@@ -78,18 +131,9 @@ function AISandboxPage() {
     const modelParam = searchParams.get('model');
     return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
   });
-  const [planningModel, setPlanningModel] = useState(() => {
-    const planningParam = searchParams.get('planningModel');
-    return appConfig.ai.availableModels.includes(planningParam || '') ? planningParam! : appConfig.ai.defaultModel;
-  });
-  const [coderModel, setCoderModel] = useState(() => {
-    const coderParam = searchParams.get('coderModel');
-    return appConfig.ai.availableModels.includes(coderParam || '') ? coderParam! : appConfig.ai.defaultModel;
-  });
-  const [qaModel, setQaModel] = useState(() => {
-    const qaParam = searchParams.get('qaModel');
-    return appConfig.ai.availableModels.includes(qaParam || '') ? qaParam! : appConfig.ai.defaultModel;
-  });
+  const [planningModel, setPlanningModel] = useState(() => normalizeTeamModel('planning', searchParams.get('planningModel')));
+  const [coderModel, setCoderModel] = useState(() => normalizeTeamModel('coder', searchParams.get('coderModel')));
+  const [qaModel, setQaModel] = useState(() => normalizeTeamModel('qa', searchParams.get('qaModel')));
   const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlStatus, setUrlStatus] = useState<string[]>([]);
@@ -212,6 +256,7 @@ function AISandboxPage() {
       const storedQaModel = sessionStorage.getItem('selectedQaModel');
       const storedInstructions = sessionStorage.getItem('additionalInstructions');
       const storedGenerationIntent = sessionStorage.getItem('generationIntent');
+      let projectIdForSandbox = sessionStorage.getItem('projectId');
       
       if (storedUrl) {
         // Mark that we have an initial submission since we're loading with a URL
@@ -230,12 +275,12 @@ function AISandboxPage() {
         // Set the values in the component state
         setHomeUrlInput(storedUrl);
         setSelectedStyle(storedStyle || 'modern');
-        if (storedPlanningModel) setPlanningModel(storedPlanningModel);
-        if (storedCoderModel) setCoderModel(storedCoderModel);
-        if (storedQaModel) setQaModel(storedQaModel);
+        if (storedPlanningModel) setPlanningModel(normalizeTeamModel('planning', storedPlanningModel));
+        if (storedCoderModel) setCoderModel(normalizeTeamModel('coder', storedCoderModel));
+        if (storedQaModel) setQaModel(normalizeTeamModel('qa', storedQaModel));
 
         // Register or load project in PostgreSQL database
-        const storedProjectId = sessionStorage.getItem('projectId');
+        const storedProjectId = projectIdForSandbox;
         if (storedProjectId) {
           const pid = Number(storedProjectId);
           setActiveProjectId(pid);
@@ -244,37 +289,38 @@ function AISandboxPage() {
             .then(res => res.json())
             .then(data => {
               if (data.success && data.project) {
-                if (data.project.planning_model) setPlanningModel(data.project.planning_model);
-                if (data.project.coder_model) setCoderModel(data.project.coder_model);
-                if (data.project.qa_model) setQaModel(data.project.qa_model);
+                if (data.project.planning_model) setPlanningModel(normalizeTeamModel('planning', data.project.planning_model));
+                if (data.project.coder_model) setCoderModel(normalizeTeamModel('coder', data.project.coder_model));
+                if (data.project.qa_model) setQaModel(normalizeTeamModel('qa', data.project.qa_model));
               }
             })
             .catch(err => console.error('[database] Failed to load project models:', err));
         } else {
           const projectNameStr = sessionStorage.getItem('projectName') || 'New Project';
-          fetch('/api/projects', {
+          const registrationResponse = await fetch('/api/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: projectNameStr,
               targetUrl: storedUrl,
               style: storedStyle || '',
-              planningModel: storedPlanningModel || planningModel || '',
-              coderModel: storedCoderModel || coderModel || '',
-              qaModel: storedQaModel || qaModel || ''
+              planningModel: normalizeTeamModel('planning', storedPlanningModel || planningModel),
+              coderModel: normalizeTeamModel('coder', storedCoderModel || coderModel),
+              qaModel: normalizeTeamModel('qa', storedQaModel || qaModel)
             })
-          })
-            .then(res => res.json())
-            .then(regData => {
-              if (regData.success && regData.project) {
-                setActiveProjectId(regData.project.id);
-                console.log('[database] Project registered with ID:', regData.project.id);
-                if (regData.project.planning_model) setPlanningModel(regData.project.planning_model);
-                if (regData.project.coder_model) setCoderModel(regData.project.coder_model);
-                if (regData.project.qa_model) setQaModel(regData.project.qa_model);
-              }
-            })
-            .catch(dbErr => console.error('[database] Failed to register project:', dbErr));
+          });
+          const regData = await registrationResponse.json();
+          if (!registrationResponse.ok || !regData.success || !regData.project) {
+            throw new Error(regData.error || 'Failed to register project');
+          }
+
+          projectIdForSandbox = String(regData.project.id);
+          sessionStorage.setItem('projectId', String(regData.project.id));
+          setActiveProjectId(regData.project.id);
+          console.log('[database] Project registered with ID:', regData.project.id);
+          if (regData.project.planning_model) setPlanningModel(normalizeTeamModel('planning', regData.project.planning_model));
+          if (regData.project.coder_model) setCoderModel(normalizeTeamModel('coder', regData.project.coder_model));
+          if (regData.project.qa_model) setQaModel(normalizeTeamModel('qa', regData.project.qa_model));
         }
         
         // Add details to context if provided
@@ -316,10 +362,10 @@ function AISandboxPage() {
           setAiModel(storedModel);
         }
         if (storedPlanningModel) {
-          setPlanningModel(storedPlanningModel);
+          setPlanningModel(normalizeTeamModel('planning', storedPlanningModel));
         }
         if (storedCoderModel) {
-          setCoderModel(storedCoderModel);
+          setCoderModel(normalizeTeamModel('coder', storedCoderModel));
         }
         
         // Skip the home screen and go directly to builder
@@ -362,11 +408,11 @@ function AISandboxPage() {
           // For now, just create a new sandbox - you could enhance this to actually restore
           // the specific sandbox if your backend supports it
           sandboxCreated = true;
-          await createSandbox(true);
+          await createSandbox(true, projectIdForSandbox);
         } else {
           console.log('[home] No sandbox in URL, creating new sandbox automatically...');
           sandboxCreated = true;
-          await createSandbox(true);
+          await createSandbox(true, projectIdForSandbox);
         }
         
         // If we have a URL from the home page, mark for automatic start
@@ -488,7 +534,7 @@ function AISandboxPage() {
   // Auto-start generation if flagged
   useEffect(() => {
     const autoStart = sessionStorage.getItem('autoStart');
-    if (autoStart === 'true' && !showHomeScreen && homeUrlInput) {
+    if (autoStart === 'true' && !showHomeScreen && homeUrlInput && sandboxData) {
       sessionStorage.removeItem('autoStart');
       // Small delay to ensure everything is ready
       setTimeout(() => {
@@ -496,7 +542,7 @@ function AISandboxPage() {
         startGeneration();
       }, 1000);
     }
-  }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showHomeScreen, homeUrlInput, sandboxData]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   useEffect(() => {
@@ -743,11 +789,16 @@ function AISandboxPage() {
 
   const sandboxCreationRef = useRef<boolean>(false);
   
-  const createSandbox = async (fromHomeScreen = false) => {
+  const createSandbox = async (fromHomeScreen = false, projectIdOverride?: string | number | null) => {
     // Prevent duplicate sandbox creation
     if (sandboxCreationRef.current) {
       console.log('[createSandbox] Sandbox creation already in progress, skipping...');
       return null;
+    }
+
+    const projectId = projectIdOverride ?? activeProjectId ?? sessionStorage.getItem('projectId');
+    if (!projectId) {
+      throw new Error('A project must be registered before creating a sandbox');
     }
     
     sandboxCreationRef.current = true;
@@ -762,7 +813,11 @@ function AISandboxPage() {
       const response = await fetch('/api/create-ai-sandbox-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({
+          projectId: String(projectId),
+          generationId: null,
+          provider: 'e2b'
+        })
       });
       
       const data = await response.json();
@@ -845,9 +900,39 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
   };
 
-  const applyGeneratedCode = async (code: string, isEdit: boolean = false, overrideSandboxData?: SandboxData) => {
+  const createApplyGenerationContext = (input: Omit<ApplyGenerationContext, 'projectId'>): ApplyGenerationContext => {
+    const projectId = activeProjectId ?? Number(sessionStorage.getItem('projectId'));
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      throw new Error('A project is required before generated code can be applied.');
+    }
+
+    return { ...input, projectId: String(projectId) };
+  };
+
+  const applyGeneratedCode = async (
+    code: string,
+    isEdit: boolean = false,
+    overrideSandboxData?: SandboxData,
+    generationContext?: ApplyGenerationContext,
+  ): Promise<boolean> => {
+    let applicationPassed = false;
     setLoading(true);
     log('Applying AI-generated code...');
+
+    const clearPendingApplyState = (status: string) => {
+      setCodeApplicationState({ stage: null });
+      setLoadingStage(null);
+      setIsCapturingScreenshot(false);
+      setIsPreparingDesign(false);
+      setGenerationProgress(prev => ({
+        ...prev,
+        isGenerating: false,
+        isStreaming: false,
+        isThinking: false,
+        isEdit: false,
+        status,
+      }));
+    };
     
     // Abort any active apply stream
     if (activeApplyStreamRef.current) {
@@ -870,6 +955,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       // Use streaming endpoint for real-time feedback
       const effectiveSandboxData = overrideSandboxData || sandboxData;
+      const scopedGenerationContext = generationContext ?? createApplyGenerationContext({
+        mode: isEdit ? 'edit' : 'scratch',
+        prompt: aiChatInput.trim() || 'Apply generated candidate',
+        targetUrl: null,
+      });
       const response = await fetch('/api/apply-ai-code-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -878,7 +968,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           response: code,
           isEdit: isEdit,
           packages: pendingPackages,
-          sandboxId: effectiveSandboxData?.sandboxId // Pass the sandbox ID to ensure proper connection
+          sandboxId: effectiveSandboxData?.sandboxId, // Pass the sandbox ID to ensure proper connection
+          generationContext: scopedGenerationContext,
         })
       });
       
@@ -889,24 +980,43 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Handle streaming response
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
+      const sseFrames = new SseFrameBuffer();
       let finalData: any = null;
-      
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
+      let applyErrorMessage: string | null = null;
+      let didReachApplyTerminal = false;
+
+      const processApplyFrame = (frame: { event?: string; data: string }) => {
+        try {
+          const data = JSON.parse(frame.data);
+          if (!data.type && frame.event) {
+            data.type = frame.event;
+          }
               
               switch (data.type) {
                 case 'start':
                   // Don't add as chat message, just update state
                   setCodeApplicationState({ stage: 'analyzing' });
+                  break;
+
+                case 'validation-started':
+                  setCodeApplicationState({ stage: 'applying', message: data.message });
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Running deterministic validation...' }));
+                  break;
+
+                case 'validation-report':
+                  setCodeApplicationState(prev => ({ ...prev, stage: 'applying', message: data.message }));
+                  setGenerationProgress(prev => ({
+                    ...prev,
+                    status: `Validation report: ${data.message || 'Deterministic checks completed'}`,
+                  }));
+                  break;
+
+                case 'rollback-started':
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Restoring previous sandbox files...' }));
+                  break;
+
+                case 'rollback-complete':
+                  setGenerationProgress(prev => ({ ...prev, status: data.message || 'Rollback completed' }));
                   break;
                   
                 case 'step':
@@ -978,6 +1088,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   
                 case 'complete':
                   finalData = data;
+                  applicationPassed = true;
+                  didReachApplyTerminal = true;
                   setCodeApplicationState({ stage: 'complete' });
                   // Clear the state after a delay
                   setTimeout(() => {
@@ -988,7 +1100,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   break;
                   
                 case 'error':
-                  addChatMessage(`Error: ${data.message || data.error || 'Unknown error'}`, 'system');
+                  applyErrorMessage = data.message || data.error || 'Unknown error';
+                  didReachApplyTerminal = true;
+                  if (iframeRef.current) {
+                    iframeRef.current.src = iframeRef.current.src;
+                  }
+                  addChatMessage(`Validation failed: ${applyErrorMessage}`, 'error');
+                  clearPendingApplyState(data.message || data.error || 'Validation failed');
                   // Reset loading state on error
                   setLoading(false);
                   break;
@@ -1004,11 +1122,28 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   }
                   break;
               }
-            } catch {
-              // Ignore parse errors
-            }
-          }
+        } catch (error) {
+          console.error('Failed to parse apply SSE frame:', error);
         }
+      };
+
+      while (reader) {
+        const { done, value } = await reader.read();
+        const frames = done
+          ? sseFrames.append(decoder.decode())
+          : sseFrames.append(decoder.decode(value, { stream: true }));
+
+        for (const frame of frames) {
+          processApplyFrame(frame);
+        }
+
+        if (done) break;
+      }
+
+      if (!didReachApplyTerminal) {
+        clearPendingApplyState('Code application ended before validation completed.');
+        addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');
+        return false;
       }
       
       // Process final data
@@ -1280,11 +1415,14 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           throw new Error(finalData?.error || 'Failed to apply code');
         }
       } else {
-        // If no final data was received, still close loading
-        addChatMessage('Code application may have partially succeeded. Check the preview.', 'system');
+        // A terminal apply error is authoritative: keep the old preview rather
+        // than implying that an unvalidated candidate may have succeeded.
+        if (!applyErrorMessage) throw new Error('Apply stream ended without a terminal result.');
       }
     } catch (error: any) {
+      clearPendingApplyState(error.message || 'Failed to apply code');
       log(`Failed to apply code: ${error.message}`, 'error');
+      addChatMessage(`Validation failed: ${error.message}`, 'error');
     } finally {
       setLoading(false);
       // Clear isEdit flag after applying code
@@ -1293,6 +1431,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         isEdit: false
       }));
     }
+    return applicationPassed;
   };
 
   const fetchHistory = async () => {
@@ -1468,8 +1607,45 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //   };
 
   const hasProjectPreview = generationProgress.files.length > 0 || conversationContext.appliedCode.length > 0;
+  const isGenerationProgressActive = Boolean(
+    loadingStage ||
+    isCapturingScreenshot ||
+    isPreparingDesign ||
+    generationProgress.isGenerating ||
+    generationProgress.isStreaming ||
+    (codeApplicationState.stage && codeApplicationState.stage !== 'complete'),
+  );
+  const generationProgressSurface = (
+    <GenerationProgressSurface
+      phase={toGenerationProgressPhase({
+        loadingStage,
+        isCapturingScreenshot,
+        isPreparingDesign,
+        generationStatus: generationProgress.status,
+        isGenerating: generationProgress.isGenerating,
+        isStreaming: generationProgress.isStreaming,
+        codeApplicationStage: codeApplicationState.stage,
+      })}
+      status={generationProgress.status || 'Preparing your workspace'}
+      detail={codeApplicationState.message || generationProgress.currentFile?.path}
+      targetLabel={targetUrl || homeUrlInput || undefined}
+    />
+  );
 
   const renderMainContent = () => {
+
+    if (
+      activeTab === 'generation' &&
+      isGenerationProgressActive &&
+      generationProgress.files.length === 0 &&
+      !generationProgress.currentFile
+    ) {
+      return (
+        <div className="flex h-full min-w-0 items-center justify-center bg-neutral-50 p-4 dark:bg-neutral-950 sm:p-6">
+          {generationProgressSurface}
+        </div>
+      );
+    }
 
     if (activeTab === 'generation' && (generationProgress.isGenerating || generationProgress.files.length > 0)) {
       return (
@@ -1882,37 +2058,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               />
             )}
             
-            {/* Loading overlay - only show when actively processing initial generation */}
             {shouldShowLoadingOverlay && (
-              <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center backdrop-blur-sm">
-                {/* Loading animation with skeleton */}
-                <div className="text-center max-w-md">
-                  {/* Animated skeleton lines */}
-                  <div className="mb-6 space-y-3">
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0s' }} />
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse w-4/5 mx-auto" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0.2s' }} />
-                    <div className="h-2 bg-gradient-to-r from-transparent via-white/20 to-transparent rounded animate-pulse w-3/5 mx-auto" 
-                         style={{ animationDuration: '1.5s', animationDelay: '0.4s' }} />
-                  </div>
-                  
-                  {/* Status text */}
-                  <p className="text-white text-lg font-medium">
-                    {isCapturingScreenshot ? 'Analyzing website...' :
-                     isPreparingDesign ? 'Preparing design...' :
-                     generationProgress.isGenerating ? 'Generating code...' :
-                     'Loading...'}
-                  </p>
-                  
-                  {/* Subtle progress hint */}
-                  <p className="text-white/60 text-sm mt-2">
-                    {isCapturingScreenshot ? 'Taking a screenshot of the site' :
-                     isPreparingDesign ? 'Understanding the layout and structure' :
-                     generationProgress.isGenerating ? 'Writing React components' :
-                     'Please wait...'}
-                  </p>
-                </div>
+              <div className="absolute inset-0 flex items-center justify-center bg-neutral-950/70 p-4 backdrop-blur-sm sm:p-6">
+                {generationProgressSurface}
               </div>
             )}
           </div>
@@ -2000,64 +2148,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               </button>
             </div>
             
-            {/* Package installation overlay - shows when installing packages or applying code */}
-            {codeApplicationState.stage && codeApplicationState.stage !== 'complete' && (
-              <div className="absolute inset-0 bg-white/95 backdrop-blur-sm flex items-center justify-center z-10">
-                <div className="text-center max-w-md">
-                  <div className="mb-6">
-                    {/* Animated icon based on stage */}
-                    {codeApplicationState.stage === 'installing' ? (
-                      <div className="w-16 h-16 mx-auto">
-                        <svg className="w-full h-full animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </div>
-                    ) : null}
-                  </div>
-                  
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    {codeApplicationState.stage === 'analyzing' && 'Analyzing code...'}
-                    {codeApplicationState.stage === 'installing' && 'Installing packages...'}
-                    {codeApplicationState.stage === 'applying' && 'Applying changes...'}
-                  </h3>
-                  
-                  {/* Package list during installation */}
-                  {codeApplicationState.stage === 'installing' && codeApplicationState.packages && (
-                    <div className="mb-4">
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {codeApplicationState.packages.map((pkg, index) => (
-                          <span 
-                            key={index}
-                            className={`px-2 py-1 text-xs rounded-full transition-all ${
-                              codeApplicationState.installedPackages?.includes(pkg)
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}
-                          >
-                            {pkg}
-                            {codeApplicationState.installedPackages?.includes(pkg) && (
-                              <span className="ml-1">✓</span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Files being generated */}
-                  {codeApplicationState.stage === 'applying' && codeApplicationState.filesGenerated && (
-                    <div className="text-sm text-gray-600">
-                      Creating {codeApplicationState.filesGenerated.length} files...
-                    </div>
-                  )}
-                  
-                  <p className="text-sm text-gray-500 mt-2">
-                    {codeApplicationState.stage === 'analyzing' && 'Parsing generated code and detecting dependencies...'}
-                    {codeApplicationState.stage === 'installing' && 'This may take a moment while npm installs the required packages...'}
-                    {codeApplicationState.stage === 'applying' && 'Writing files to your sandbox environment...'}
-                  </p>
-                </div>
+            {isGenerationProgressActive && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-neutral-50/80 p-4 backdrop-blur-sm dark:bg-neutral-950/80 sm:p-6">
+                {generationProgressSurface}
               </div>
             )}
             
@@ -2092,7 +2185,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Default state when no sandbox and no screenshot
       return (
         <div className="flex items-center justify-center h-full bg-gray-50 text-gray-600 text-lg">
-          {screenshotError ? (
+          {isGenerationProgressActive ? generationProgressSurface : screenshotError ? (
             <div className="text-center">
               <p className="mb-2">Failed to capture screenshot</p>
               <p className="text-sm text-gray-500">{screenshotError}</p>
@@ -2224,6 +2317,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           model: generationMode === 'plan' ? planningModel : coderModel,
           context: fullContext,
           isEdit: conversationContext.appliedCode.length > 0,
+          generationMode,
           planningModel,
           coderModel,
           qaModel
@@ -2255,10 +2349,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              let data: any;
               try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'status') {
+                data = JSON.parse(line.slice(6));
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
+                continue;
+              }
+
+              if (data.type === 'error') {
+                throw new Error(data.error || data.message || 'Generation provider failed');
+              }
+
+              if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
                 } else if (data.type === 'thinking') {
                   setGenerationProgress(prev => ({ 
@@ -2404,7 +2507,14 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     ...prev,
                     status: data.message || `Installing ${data.name}`
                   }));
-                } else if (data.type === 'complete') {
+                } else if (data.type === "validation") {
+                  setGenerationProgress((previous) => ({
+                    ...previous,
+                    status: data.repairCount > 0
+                      ? `Quality gate passed after ${data.repairCount} repair`
+                      : "Quality gate passed",
+                  }));
+                } else if (data.type === 'candidate-ready') {
                   generatedCode = data.generatedCode;
                   explanation = data.explanation;
                   
@@ -2453,18 +2563,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   
                   setGenerationProgress(prev => ({
                     ...prev,
-                    status: `Generated ${parsedFiles.length > 0 ? parsedFiles.length : prev.files.length} file${(parsedFiles.length > 0 ? parsedFiles.length : prev.files.length) !== 1 ? 's' : ''}!`,
-                    isGenerating: false,
+                    status: 'Candidate ready. Applying it and running deterministic validation…',
+                    isGenerating: true,
                     isStreaming: false,
                     isEdit: prev.isEdit,
                     // Keep the files that were already parsed during streaming
                     files: prev.files.length > 0 ? prev.files : parsedFiles
                   }));
-                } else if (data.type === 'error') {
-                  throw new Error(data.error);
-                }
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
               }
             }
           }
@@ -2487,15 +2592,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           for (let i = newMessages.length - 1; i >= 0; i--) {
             if (newMessages[i].type === 'ai') {
               const defaultText = isEdit && generatedFiles.length > 0
-                ? `Updated ${generatedFiles.map(f => f.split('/').pop()).join(', ')}`
-                : 'Code generated!';
+                ? `Candidate ready for ${generatedFiles.map(f => f.split('/').pop()).join(', ')}. Applying it and running deterministic validation…`
+                : 'Candidate ready. Applying it and running deterministic validation…';
               newMessages[i] = {
                 ...newMessages[i],
-                content: explanation || newMessages[i].content || defaultText,
-                metadata: {
-                  ...newMessages[i].metadata,
-                  appliedFiles: isEdit && generatedFiles.length > 0 ? [generatedFiles[0]] : generatedFiles
-                }
+                content: defaultText,
               };
               break;
             }
@@ -2526,17 +2627,29 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           }
         }
         
-        if (activeSandboxData && generatedCode) {
-          // For new sandbox creations (especially Vercel), add a delay to ensure Vite is ready
-          if (sandboxCreating) {
-            console.log('[startGeneration] New sandbox created, waiting for services to be ready...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-          
-          // Use isEdit flag that was determined at the start
-          // Pass the sandbox data from the promise if it's different from the state
-          await applyGeneratedCode(generatedCode, isEdit, activeSandboxData !== sandboxData ? activeSandboxData : undefined);
+        if (!activeSandboxData) {
+          throw new Error('A sandbox is required before generated code can be applied.');
         }
+
+        // For new sandbox creations (especially Vercel), add a delay to ensure Vite is ready
+        if (sandboxCreating) {
+          console.log('[startGeneration] New sandbox created, waiting for services to be ready...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        const applicationPassed = await applyGeneratedCode(
+          generatedCode,
+          isEdit,
+          activeSandboxData !== sandboxData ? activeSandboxData : undefined,
+          createApplyGenerationContext({
+            mode: isEdit ? 'edit' : 'scratch',
+            prompt: finalPrompt,
+            targetUrl: null,
+          }),
+        );
+        if (!applicationPassed) return;
+      } else {
+        throw new Error('Failed to generate a candidate.');
       }
       
       // Show completion status briefly then switch to preview
@@ -3002,7 +3115,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //       }
 //       
 //     } catch (error: any) {
-//       addChatMessage(`Failed to clone website: ${error.message}`, 'system');
+//       addChatMessage(`Clone generation failed: ${error.message}`, 'system');
 //       setUrlStatus([]);
 //       setIsPreparingDesign(false);
 //       // Clear all states on error
@@ -3104,7 +3217,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     );
     
     // Start creating sandbox and capturing screenshot immediately in parallel
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve(null);
+    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve(sandboxData);
     
     // Set loading stage immediately before hiding home screen
     setLoadingStage('gathering');
@@ -3126,12 +3239,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       // Wait for sandbox to be ready (if it's still creating)
       const createdSandbox = await sandboxPromise;
+      const activeSandboxData = createdSandbox || sandboxData;
       
       // Now start the clone process which will stream the generation
       setUrlInput(homeUrlInput);
       setUrlOverlayVisible(false); // Make sure overlay is closed
       setUrlStatus(['Scraping website content...']);
       
+      const isFromScratch = generationIntent === 'scratch';
+      const filesBeforeGeneration = generationProgress.files;
+
       try {
         // Scrape the website
         let url = homeUrlInput.trim();
@@ -3371,8 +3488,6 @@ Focus on building something NEW, minimal, and functional that perfectly matches 
 
         } else {
           // === NORMAL CLONE MODE PROMPT OR BUILD FROM SCRATCH PROMPT ===
-          const isFromScratch = url.startsWith('scratch://');
-          
           if (!scrapeData && !isFromScratch) {
             throw new Error('Scrape data is missing');
           }
@@ -3492,12 +3607,13 @@ Focus on the key sections and content, making it clean and modern.`;
           body: JSON.stringify({ 
             prompt,
             model: generationMode === 'plan' ? planningModel : coderModel,
+            generationMode,
             planningModel,
             coderModel,
             qaModel,
             generationIntent,
             context: {
-              sandboxId: sandboxData?.sandboxId,
+              sandboxId: activeSandboxData?.sandboxId,
               structure: structureContent,
               conversationContext: conversationContext
             }
@@ -3529,10 +3645,19 @@ Focus on the key sections and content, making it clean and modern.`;
             
             for (const line of lines) {
               if (line.startsWith('data: ')) {
+                let data: any;
                 try {
-                  const data = JSON.parse(line.slice(6));
-                  
-                  if (data.type === 'status') {
+                  data = JSON.parse(line.slice(6));
+                } catch (e) {
+                  console.error('Failed to parse SSE data:', e);
+                  continue;
+                }
+
+                if (data.type === 'error') {
+                  throw new Error(data.error || data.message || 'Generation provider failed');
+                }
+
+                if (data.type === 'status') {
                     setGenerationProgress(prev => ({ ...prev, status: data.message }));
                   } else if (data.type === 'thinking') {
                     setGenerationProgress(prev => ({ 
@@ -3656,38 +3781,51 @@ Focus on the key sections and content, making it clean and modern.`;
                     
                     return updatedState;
                   });
-                } else if (data.type === 'complete') {
-                  generatedCode = data.generatedCode;
-                  explanation = data.explanation;
+                  } else if (data.type === "validation") {
+                    setGenerationProgress((previous) => ({
+                      ...previous,
+                      status: data.repairCount > 0
+                        ? `Quality gate passed after ${data.repairCount} repair`
+                        : "Quality gate passed",
+                    }));
+                  } else if (data.type === 'candidate-ready') {
+                    generatedCode = data.generatedCode;
+                    explanation = data.explanation;
+
+                    setGenerationProgress((previous) => ({
+                      ...previous,
+                      status: 'Candidate ready. Applying it and running deterministic validation…',
+                      isGenerating: true,
+                      isStreaming: false,
+                      isThinking: false,
+                    }));
                   
                   // Save the last generated code
                   setConversationContext(prev => ({
                     ...prev,
-                    lastGeneratedCode: generatedCode
-                  }));
-                }
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
+                      lastGeneratedCode: generatedCode
+                    }));
+                  }
               }
             }
-          }
         }
       }
         
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: 'Generation complete!'
-        }));
-        
         if (generatedCode) {
-          addChatMessage('AI recreation generated!', 'system');
-          
           setPromptInput(generatedCode);
 
-          // Apply the code (first time is not edit mode)
-          await applyGeneratedCode(generatedCode, false);
+          const applicationPassed = await applyGeneratedCode(
+            generatedCode,
+            false,
+            activeSandboxData,
+            createApplyGenerationContext({
+              mode: isFromScratch ? 'scratch' : isInspirationMode ? 'inspiration' : 'clone',
+              prompt: homeContextInput.trim() || prompt,
+              targetUrl: isFromScratch ? null : url,
+            }),
+          );
+
+          if (!applicationPassed) return;
 
           const successContent = isInspirationMode
             ? `Built an original application using visual direction extracted from ${cleanUrl}. You can now refine the layout, content, or interactions.`
@@ -3753,7 +3891,31 @@ Focus on the key sections and content, making it clean and modern.`;
           setActiveTab('preview');
         }, 1000); // Show completion briefly then switch
       } catch (error: any) {
-        addChatMessage(`Failed to clone website: ${error.message}`, 'system');
+        const failurePrefix = isFromScratch
+          ? 'Generation failed'
+          : isInspirationMode
+            ? 'Inspiration build failed'
+            : 'Clone generation failed';
+        const failureMessage = `${failurePrefix}: ${error.message}`;
+        setChatMessages(prev => {
+          const next = [...prev];
+          let replacedThinkingMessage = false;
+          for (let index = next.length - 1; index >= 0; index--) {
+            if (next[index].type === 'ai' && next[index].content === 'Thinking...') {
+              next[index] = {
+                ...next[index],
+                type: 'error',
+                content: failureMessage
+              };
+              replacedThinkingMessage = true;
+              break;
+            }
+          }
+          if (!replacedThinkingMessage) {
+            next.push({ content: failureMessage, type: 'error', timestamp: new Date() });
+          }
+          return next;
+        });
         setUrlStatus([]);
         setIsPreparingDesign(false);
         setIsStartingNewGeneration(false); // Clear new generation flag on error
@@ -3763,9 +3925,11 @@ Focus on the key sections and content, making it clean and modern.`;
           ...prev,
           isGenerating: false,
           isStreaming: false,
+          isThinking: false,
           status: '',
-          // Keep files to display in sidebar
-          files: prev.files
+          streamedCode: '',
+          currentFile: undefined,
+          files: filesBeforeGeneration
         }));
       }
     }, 500);
@@ -4133,9 +4297,7 @@ Focus on the key sections and content, making it clean and modern.`;
             )}
             {chatMessages.map((msg, idx) => {
               // Check if this message is from a successful generation
-              const isGenerationComplete = msg.content.includes('Successfully recreated') || 
-                                         msg.content.includes('AI recreation generated!') ||
-                                         msg.content.includes('Code generated!');
+              const isGenerationComplete = msg.content.includes('Successfully recreated');
               
               // Get the files from metadata if this is a completion message
               // const completedFiles = msg.metadata?.appliedFiles || [];
@@ -4861,7 +5023,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setPlanningModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-blue-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.planning.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>
@@ -4895,7 +5057,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setCoderModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-green-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.coder.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>
@@ -4929,7 +5091,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     onChange={(e) => setQaModel(e.target.value)}
                     className="w-full bg-white border border-gray-200 text-gray-700 rounded-8 px-12 py-8 focus:outline-none cursor-pointer focus:border-orange-400 transition-all font-medium"
                   >
-                    {appConfig.ai.availableModels.map(model => (
+                    {appConfig.ai.teamModelOptions.qa.map(model => (
                       <option key={model} value={model}>
                         {appConfig.ai.modelDisplayNames?.[model] || model}
                       </option>

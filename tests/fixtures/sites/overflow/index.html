@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Overflow fixture</title>
+    <style>
+      html { overflow-x: visible; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      main { padding: 24px; }
+      .wide-panel { width: 540px; padding: 24px; border: 1px solid #111; }
+      button:focus-visible { outline: 3px solid #005fcc; outline-offset: 3px; }
+      @media (prefers-reduced-motion: reduce) { .wide-panel { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="wide-panel">
+        <h1>Overflow fixture</h1>
+        <button type="button">Continue</button>
+      </section>
+    </main>
+  </body>
+</html>

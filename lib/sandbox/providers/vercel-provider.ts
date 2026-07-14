@@ -1,9 +1,12 @@
 import { Sandbox } from '@vercel/sandbox';
 import { SandboxProvider, SandboxInfo, CommandResult } from '../types';
+import { waitForHttpReady } from '../readiness/http-readiness';
+import { viteReactTemplate } from '../templates/vite-react';
 // SandboxProviderConfig available through parent class
 
 export class VercelProvider extends SandboxProvider {
   private existingFiles: Set<string> = new Set();
+  private viteCommand: unknown = null;
 
   async createSandbox(): Promise<SandboxInfo> {
     try {
@@ -68,15 +71,9 @@ export class VercelProvider extends SandboxProvider {
 
     
     try {
-      // Parse command into cmd and args (matching PR syntax)
-      const parts = command.split(' ');
-      const cmd = parts[0];
-      const args = parts.slice(1);
-      
-      // Vercel uses runCommand with cmd and args object (based on PR)
       const result = await this.sandbox.runCommand({
-        cmd: cmd,
-        args: args,
+        cmd: 'sh',
+        args: ['-lc', command],
         cwd: '/vercel/sandbox',
         env: {}
       });
@@ -337,27 +334,7 @@ export class VercelProvider extends SandboxProvider {
     // Directory structure created
     
     // Create package.json
-    const packageJson = {
-      name: "sandbox-app",
-      version: "1.0.0",
-      type: "module",
-      scripts: {
-        dev: "vite --host",
-        build: "vite build",
-        preview: "vite preview"
-      },
-      dependencies: {
-        react: "^18.2.0",
-        "react-dom": "^18.2.0"
-      },
-      devDependencies: {
-        "@vitejs/plugin-react": "^4.0.0",
-        vite: "^4.3.9",
-        tailwindcss: "^3.3.0",
-        postcss: "^8.4.31",
-        autoprefixer: "^10.4.16"
-      }
-    };
+    const packageJson = viteReactTemplate.packageJson;
     
     await this.writeFile('package.json', JSON.stringify(packageJson, null, 2));
     
@@ -522,16 +499,13 @@ body {
     });
     
     // Start Vite in background
-    await this.sandbox.runCommand({
-      cmd: 'sh',
-      args: ['-c', 'nohup npm run dev > /tmp/vite.log 2>&1 &'],
-      cwd: '/vercel/sandbox'
+    this.viteCommand = await this.sandbox.runCommand({
+      cmd: 'npm',
+      args: ['run', 'dev'],
+      cwd: '/vercel/sandbox',
+      detached: true,
     });
-    
-    // Vite server started in background
-    
-    // Wait for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, 7000));
+    await this.waitForViteReady();
     
     // Track initial files
     this.existingFiles.add('src/App.jsx');
@@ -558,20 +532,20 @@ body {
       cwd: '/'
     });
     
-    // Wait a moment
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Start Vite in background
-    await this.sandbox.runCommand({
-      cmd: 'sh',
-      args: ['-c', 'nohup npm run dev > /tmp/vite.log 2>&1 &'],
-      cwd: '/vercel/sandbox'
+    this.viteCommand = await this.sandbox.runCommand({
+      cmd: 'npm',
+      args: ['run', 'dev'],
+      cwd: '/vercel/sandbox',
+      detached: true,
     });
-    
-    // Vite server started in background
-    
-    // Wait for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, 7000));
+    await this.waitForViteReady();
+  }
+
+  private async waitForViteReady(): Promise<void> {
+    const url = this.getSandboxUrl();
+    if (!url) throw new Error('Sandbox URL is unavailable for readiness probe');
+    const readiness = await waitForHttpReady({ url, timeoutMs: 30_000 });
+    if (!readiness.ready) throw new Error(`Vite did not become ready: ${readiness.lastError ?? 'unknown error'}`);
   }
 
   getSandboxUrl(): string | null {

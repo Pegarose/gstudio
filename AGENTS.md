@@ -252,7 +252,7 @@ Open Lovable's existing infrastructure maps cleanly onto prompt-level guardrails
 | Runtime capability | Prompt-level counterpart |
 | --- | --- |
 | Concurrent guardrail (AbortController) | System prompt treats each generation as atomic; no half-states |
-| Fallback routing (primary AI -> Cline) | Output contract is model-agnostic so failover is seamless |
+| Fallback routing (OpenCode -> configured TR4 route) | Output contract is model-agnostic so failover is seamless |
 | Snapshot rollback (PostgreSQL) | Each emit is independently valid, safe to snapshot |
 | Auto package detection | Output contract: import only what you use, real npm names |
 | Vite log monitor | auto-debug skill consumes it directly |

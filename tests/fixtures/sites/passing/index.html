@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Passing fixture</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      main { max-width: 72rem; margin: 0 auto; padding: 24px; animation: settle 1s ease-in-out infinite; }
+      button { border: 1px solid #111; padding: 12px 16px; background: #fff; color: #111; }
+      button:focus-visible { outline: 3px solid #005fcc; outline-offset: 3px; }
+      @keyframes settle { 50% { transform: translateY(1px); } }
+      @media (prefers-reduced-motion: reduce) { main { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Passing fixture</h1>
+      <p>A controlled page with visible keyboard focus and reduced-motion support.</p>
+      <button type="button">Continue</button>
+    </main>
+  </body>
+</html>

@@ -55,12 +55,12 @@ test("router throws when no route satisfies required capabilities", () => {
   assert.throws(() => router.resolve({ vision: true }));
 });
 
-test("OpenCode fallback can preserve a structured-output contract through Cline", () => {
+test("OpenCode fallback can preserve a structured-output contract through TR4", () => {
   const router = createModelRouter([
-    { id: "opencode-code", provider: "opencode", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["cline-code"] },
-    { id: "cline-code", provider: "cline", model: "x-ai/grok-code-fast-1", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
+    { id: "opencode-code", provider: "opencode", model: "kimi-k2.7-code", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["tr4-code"] },
+    { id: "tr4-code", provider: "tr4", model: "gpt-5.6-sol", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
   ]);
-  assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "cline-code");
+  assert.equal(router.fallbacksFor("opencode-code", { structuredOutput: true })[0].id, "tr4-code");
 });
 ```
 
@@ -87,7 +87,7 @@ export interface ModelCapabilities {
 
 export interface ModelRoute {
   id: string;
-  provider: "openai" | "anthropic" | "groq" | "google" | "opencode" | "tr4" | "cline" | "agentrouter" | "vercel-gateway";
+  provider: "openai" | "anthropic" | "groq" | "google" | "opencode" | "tr4" | "agentrouter" | "vercel-gateway";
   model: string;
   capabilities: ModelCapabilities;
   timeoutMs: number;
@@ -100,7 +100,7 @@ export type CapabilityRequirement = Partial<ModelCapabilities>;
 
 `router.resolve(requirement, preferredId?)` first tests the preferred route, then its ordered fallbacks, then registry order. A route matches only when every required boolean equals the route capability.
 
-Refactor `provider-manager.ts` so it accepts a `ModelRoute` instead of re-deriving provider from model-name prefixes. OpenCode, TR4, Cline, and AgentRouter use the existing OpenAI-compatible client construction with their current base URLs and environment variables. Keep a compatibility wrapper for legacy callers until Wave 5.
+Refactor `provider-manager.ts` so it accepts a `ModelRoute` instead of re-deriving provider from model-name prefixes. OpenCode, TR4, and AgentRouter use the existing OpenAI-compatible client construction with their current base URLs and environment variables. Keep a compatibility wrapper for legacy callers until Wave 5.
 
 - [ ] **Step 4: Run focused tests and TypeScript**
 

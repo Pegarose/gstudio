@@ -1,5 +1,33 @@
+import type { ModelRole, ModelRoute } from '@/lib/models/contracts';
+
 // Application Configuration
 // This file contains all configurable settings for the application
+
+const teamModelDefaults = {
+  planning: "auto/best-reasoning",
+  coder: "auto/best-coding",
+  qa: "auto/best-reasoning",
+} as const;
+
+const teamModelOptions = {
+  planning: [
+    "auto/best-reasoning",
+    "auto/pro-reasoning",
+    "auto/best-fast",
+  ],
+  coder: [
+    "auto/best-coding",
+    "auto/pro-coding",
+    "auto/best-coding-fast",
+  ],
+  qa: [
+    "auto/best-reasoning",
+    "auto/best-coding",
+    "auto/best-fast",
+  ],
+} as const;
+
+const availableModels: string[] = [...new Set(Object.values(teamModelOptions).flat())];
 
 export const appConfig = {
   // Vercel Sandbox Configuration
@@ -51,128 +79,71 @@ export const appConfig = {
   // AI Model Configuration
   ai: {
     // Default AI model
-    defaultModel: 'deepseek-v4-pro',
+    defaultModel: teamModelDefaults.coder,
     
     // Available models
-    availableModels: [
-      // --- TR4 GPT Models ---
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.6-sol',
-      'gpt-image-1.5',
-      'gpt-image-2',
-      'gpt-oss-120b-medium',
-      'gpt-5.3-codex-spark',
-      'gpt-5.5',
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      
-      // --- TR4 Claude Models ---
-      'claude-sonnet-4-6',
-      'claude-opus-4-6-thinking',
-      
-      // --- TR4 Gemini Models ---
-      'gemini-3.1-flash-lite',
-      'gemini-pro-agent',
-      'gemini-3.5-flash-low',
-      'gemini-3.5-flash-extra-low',
-      'gemini-3-flash-agent',
-      'gemini-3.1-pro-low',
-      'gemini-3-flash',
-      'gemini-3.1-flash-image',
-      
-      // --- TR4 / Opencode Kimi Models ---
-      'kimi-k2.5',
-      'kimi-k2-thinking',
-      'kimi-k2.7-code',
-      'kimi-k2.7-code-highspeed',
-      'kimi-k2',
-      'kimi-k2.6',
-      
-      // --- Opencode Models ---
-      'deepseek-v4-pro',
-      'deepseek-v4-flash',
-      'qwen3.7-max',
-      'qwen3.7-plus',
-      'qwen3.6-plus',
-      'qwen3.5-plus',
-      'minimax-m3',
-      'minimax-m2.7',
-      'minimax-m2.5',
-      'glm-5.2',
-      'glm-5.1',
-      'glm-5',
-      'mimo-v2-pro',
-      'mimo-v2-omni',
-      'mimo-v2.5-pro',
-      'mimo-v2.5',
-      'hy3-preview',
-      
-      // --- Other ---
-      'codex-auto-review',
-      
-      // Fallback
-      'google/gemini-3-pro-preview'
-    ],
+    availableModels,
+
+    teamModelDefaults,
+    teamModelOptions,
+
+    modelRoutes: [
+      {
+        id: 'intent-omniroute', provider: 'omniroute', model: 'auto/best-fast',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 30_000, fallbacks: [],
+      },
+      {
+        id: 'vision-omniroute', provider: 'omniroute', model: 'auto/best-vision',
+        capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: [],
+      },
+      {
+        id: 'design-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 45_000, fallbacks: [],
+      },
+      {
+        id: 'planning-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 60_000, fallbacks: [],
+      },
+      {
+        id: 'coder-omniroute', provider: 'omniroute', model: 'auto/best-coding',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 180_000, fallbacks: [],
+      },
+      {
+        id: 'qa-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 90_000, fallbacks: [],
+      },
+      {
+        id: 'repair-omniroute', provider: 'omniroute', model: 'auto/best-coding',
+        capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
+        timeoutMs: 180_000, fallbacks: [],
+      },
+    ] satisfies readonly ModelRoute[],
+
+    modelRoleRoutes: {
+      intent: 'intent-omniroute',
+      'vision-planner': 'vision-omniroute',
+      'design-planner': 'design-omniroute',
+      planning: 'planning-omniroute',
+      coder: 'coder-omniroute',
+      qa: 'qa-omniroute',
+      repair: 'repair-omniroute',
+    } satisfies Record<ModelRole, string>,
     
     // Model display names
     modelDisplayNames: {
-      // GPT
-      'gpt-5.4': 'GPT-5.4 (TR4)',
-      'gpt-5.4-mini': 'GPT-5.4 Mini (TR4)',
-      'gpt-5.6-sol': 'GPT-5.6 Sol (TR4)',
-      'gpt-image-1.5': 'GPT Image 1.5 (TR4)',
-      'gpt-image-2': 'GPT Image 2 (TR4)',
-      'gpt-oss-120b-medium': 'GPT OSS 120B (TR4)',
-      'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark (TR4)',
-      'gpt-5.5': 'GPT-5.5 (TR4)',
-      'gpt-5.6-terra': 'GPT-5.6 Terra (TR4)',
-      'gpt-5.6-luna': 'GPT-5.6 Luna (TR4)',
-      
-      // Claude
-      'claude-sonnet-4-6': 'Claude Sonnet 4.6 (TR4)',
-      'claude-opus-4-6-thinking': 'Claude Opus 4.6 Thinking (TR4)',
-      
-      // Gemini
-      'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite (TR4)',
-      'gemini-pro-agent': 'Gemini Pro Agent (TR4)',
-      'gemini-3.5-flash-low': 'Gemini 3.5 Flash Low (TR4)',
-      'gemini-3.5-flash-extra-low': 'Gemini 3.5 Flash Extra Low (TR4)',
-      'gemini-3-flash-agent': 'Gemini 3 Flash Agent (TR4)',
-      'gemini-3.1-pro-low': 'Gemini 3.1 Pro Low (TR4)',
-      'gemini-3-flash': 'Gemini 3 Flash (TR4)',
-      'gemini-3.1-flash-image': 'Gemini 3.1 Flash Image (TR4)',
-      
-      // Kimi
-      'kimi-k2.5': 'Kimi K2.5 (Opencode/TR4)',
-      'kimi-k2-thinking': 'Kimi K2 Thinking (Opencode/TR4)',
-      'kimi-k2.7-code': 'Kimi K2.7 Code (Opencode/TR4)',
-      'kimi-k2.7-code-highspeed': 'Kimi K2.7 Code Highspeed (TR4)',
-      'kimi-k2': 'Kimi K2 (Opencode/TR4)',
-      'kimi-k2.6': 'Kimi K2.6 (Opencode/TR4)',
-      
-      // Opencode
-      'deepseek-v4-pro': 'DeepSeek V4 Pro (Opencode)',
-      'deepseek-v4-flash': 'DeepSeek V4 Flash (Opencode)',
-      'qwen3.7-max': 'Qwen 3.7 Max (Opencode)',
-      'qwen3.7-plus': 'Qwen 3.7 Plus (Opencode)',
-      'qwen3.6-plus': 'Qwen 3.6 Plus (Opencode)',
-      'qwen3.5-plus': 'Qwen 3.5 Plus (Opencode)',
-      'minimax-m3': 'MiniMax M3 (Opencode)',
-      'minimax-m2.7': 'MiniMax M2.7 (Opencode)',
-      'minimax-m2.5': 'MiniMax M2.5 (Opencode)',
-      'glm-5.2': 'GLM 5.2 (Opencode)',
-      'glm-5.1': 'GLM 5.1 (Opencode)',
-      'glm-5': 'GLM 5 (Opencode)',
-      'mimo-v2-pro': 'Mimo v2 Pro (Opencode)',
-      'mimo-v2-omni': 'Mimo v2 Omni (Opencode)',
-      'mimo-v2.5-pro': 'Mimo v2.5 Pro (Opencode)',
-      'mimo-v2.5': 'Mimo v2.5 (Opencode)',
-      'hy3-preview': 'HY3 Preview (Opencode)',
-      
-      // Other
-      'codex-auto-review': 'Codex Auto Review (TR4)',
-      'google/gemini-3-pro-preview': 'Gemini 3 Pro (Preview)'
+      'auto/best-fast': 'OmniRoute · Best Fast',
+      'auto/best-reasoning': 'OmniRoute · Best Reasoning',
+      'auto/pro-reasoning': 'OmniRoute · Pro Reasoning',
+      'auto/best-coding': 'OmniRoute · Best Coding',
+      'auto/pro-coding': 'OmniRoute · Pro Coding',
+      'auto/best-coding-fast': 'OmniRoute · Best Coding Fast',
+      'auto/best-vision': 'OmniRoute · Best Vision',
     } as Record<string, string>,
     
     // Model API configuration

@@ -2,22 +2,34 @@ import { Sandbox } from '@e2b/code-interpreter';
 import { SandboxProvider, SandboxInfo, CommandResult } from '../types';
 // SandboxProviderConfig available through parent class
 import { appConfig } from '@/config/app.config';
+import { waitForHttpReady } from '../readiness/http-readiness';
+import { viteReactTemplate } from '../templates/vite-react';
+
+type ManagedCommandHandle = {
+  kill(): Promise<unknown>;
+};
 
 export class E2BProvider extends SandboxProvider {
   private existingFiles: Set<string> = new Set();
+  private viteCommand: ManagedCommandHandle | null = null;
 
   /**
    * Attempt to reconnect to an existing E2B sandbox
    */
   async reconnect(sandboxId: string): Promise<boolean> {
     try {
-      
-      // Try to connect to existing sandbox
-      // Note: E2B SDK doesn't directly support reconnection, but we can try to recreate
-      // For now, return false to indicate reconnection isn't supported
-      // In the future, E2B may add this capability
-      
-      return false;
+      const connected = await Sandbox.connect(sandboxId, {
+        timeoutMs: this.config.e2b?.timeoutMs,
+      });
+      this.sandbox = connected;
+      const info = await connected.getInfo();
+      this.sandboxInfo = {
+        sandboxId,
+        url: `https://${connected.getHost(appConfig.e2b.vitePort)}`,
+        provider: 'e2b',
+        createdAt: new Date(info.startedAt),
+      };
+      return true;
     } catch (error) {
       console.error(`[E2BProvider] Failed to reconnect to sandbox ${sandboxId}:`, error);
       return false;
@@ -43,7 +55,8 @@ export class E2BProvider extends SandboxProvider {
       // Create base sandbox
       this.sandbox = await Sandbox.create({ 
         apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
-        timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs
+        timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs,
+        lifecycle: { onTimeout: 'pause', autoResume: true },
       });
       
       const sandboxId = (this.sandbox as any).sandboxId || Date.now().toString();
@@ -76,32 +89,13 @@ export class E2BProvider extends SandboxProvider {
     }
 
     
-    const result = await this.sandbox.runCode(`
-      import subprocess
-      import os
-
-      os.chdir('/home/user/app')
-      result = subprocess.run(${JSON.stringify(command.split(' '))}, 
-                            capture_output=True, 
-                            text=True, 
-                            shell=False)
-
-      print("STDOUT:")
-      print(result.stdout)
-      if result.stderr:
-          print("\\nSTDERR:")
-          print(result.stderr)
-      print(f"\\nReturn code: {result.returncode}")
-    `);
-    
-    const output = result.logs.stdout.join('\n');
-    const stderr = result.logs.stderr.join('\n');
+    const result = await this.sandbox.commands.run(command, { cwd: '/home/user/app' });
     
     return {
-      stdout: output,
-      stderr,
-      exitCode: result.error ? 1 : 0,
-      success: !result.error
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      success: result.exitCode === 0
     };
   }
 
@@ -148,6 +142,15 @@ export class E2BProvider extends SandboxProvider {
           content = f.read()
       print(content)
     `);
+
+    if (result.error) {
+      const errorName = result.error.name || 'ExecutionError';
+      const errorValue = result.error.value || 'Unknown sandbox execution error';
+      if (errorName === 'FileNotFoundError') {
+        throw Object.assign(new Error(`ENOENT: ${errorName}: ${errorValue}`), { code: 'ENOENT' });
+      }
+      throw new Error(`Failed to read file: ${errorName}: ${errorValue}`);
+    }
     
     return result.logs.stdout.join('\n');
   }
@@ -234,6 +237,8 @@ export class E2BProvider extends SandboxProvider {
     }
 
     
+    const templatePackageJson = JSON.stringify(viteReactTemplate.packageJson);
+
     // Write all files in a single Python script
     const setupScript = `
 import os
@@ -246,27 +251,7 @@ os.makedirs('/home/user/app/src', exist_ok=True)
 os.makedirs('/home/user/app/public', exist_ok=True)
 
 # Package.json
-package_json = {
-    "name": "sandbox-app",
-    "version": "1.0.0",
-    "type": "module",
-    "scripts": {
-        "dev": "vite --host",
-        "build": "vite build",
-        "preview": "vite preview"
-    },
-    "dependencies": {
-        "react": "^18.2.0",
-        "react-dom": "^18.2.0"
-    },
-    "devDependencies": {
-        "@vitejs/plugin-react": "^4.0.0",
-        "vite": "^4.3.9",
-        "tailwindcss": "^3.3.0",
-        "postcss": "^8.4.31",
-        "autoprefixer": "^10.4.16"
-    }
-}
+package_json = ${templatePackageJson}
 
 with open('/home/user/app/package.json', 'w') as f:
     json.dump(package_json, f, indent=2)
@@ -484,36 +469,18 @@ if result.returncode == 0:
 else:
     print(f'⚠ Warning: npm install had issues: {result.stderr}')
     `);
+
+    // Files created through runCode are owned by root; Vite and later shell
+    // commands run as the sandbox user and need write access to the app tree.
+    await this.sandbox.commands.run('sudo chown -R user:user /home/user/app', {
+      cwd: '/home/user/app',
+    });
     
-    // Start Vite dev server
-    await this.sandbox.runCode(`
-import subprocess
-import os
-import time
-
-os.chdir('/home/user/app')
-
-# Kill any existing Vite processes
-subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-time.sleep(1)
-
-# Start Vite dev server
-env = os.environ.copy()
-env['FORCE_COLOR'] = '0'
-
-process = subprocess.Popen(
-    ['npm', 'run', 'dev'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=env
-)
-
-print(f'✓ Vite dev server started with PID: {process.pid}')
-print('Waiting for server to be ready...')
-    `);
-    
-    // Wait for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
+    this.viteCommand = await this.sandbox.commands.run('npm run dev', {
+      cwd: '/home/user/app',
+      background: true,
+    });
+    await this.waitForViteReady();
     
     // Track initial files
     this.existingFiles.add('src/App.jsx');
@@ -531,34 +498,32 @@ print('Waiting for server to be ready...')
       throw new Error('No active sandbox');
     }
 
-    
-    await this.sandbox.runCode(`
-import subprocess
-import time
-import os
+    if (this.viteCommand) {
+      await this.viteCommand.kill();
+      this.viteCommand = null;
+    }
 
-os.chdir('/home/user/app')
+    this.viteCommand = await this.sandbox.commands.run('npm run dev', {
+      cwd: '/home/user/app',
+      background: true,
+    });
+    await this.waitForViteReady();
+  }
 
-# Kill existing Vite process
-subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-time.sleep(2)
+  private async waitForViteReady(): Promise<void> {
+    const url = this.getSandboxUrl();
+    if (!url) throw new Error('Sandbox URL is unavailable for readiness probe');
+    const readiness = await waitForHttpReady({
+      url,
+      timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs,
+    });
+    if (!readiness.ready) throw new Error(`Vite did not become ready: ${readiness.lastError ?? 'unknown error'}`);
+  }
 
-# Start Vite dev server
-env = os.environ.copy()
-env['FORCE_COLOR'] = '0'
-
-process = subprocess.Popen(
-    ['npm', 'run', 'dev'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=env
-)
-
-print(f'✓ Vite restarted with PID: {process.pid}')
-    `);
-    
-    // Wait for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
+  async pause(): Promise<void> {
+    if (!this.sandbox) throw new Error('No active sandbox');
+    await this.sandbox.pause();
+    this.viteCommand = null;
   }
 
   getSandboxUrl(): string | null {

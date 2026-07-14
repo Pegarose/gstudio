@@ -1,8 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGroq } from '@ai-sdk/groq';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
 import { loadAgentContext } from '@/lib/gstudio-agent-context.js';
@@ -11,65 +7,15 @@ import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
+import { assertOmniRouteConfigured, getLanguageModel } from '@/lib/ai/provider-manager';
+import { resolveModelRoute } from '@/lib/models/registry';
+import { resolveTeamModelRoute } from '@/lib/models/team-model-policy';
+import { GenerationQualityError, runGenerationQualityGate } from "@/lib/generation/quality-gate";
+import { sanitizeGenerationModelInput } from "@/lib/generation/context/model-input";
+import { parseCompleteFileArtifact, repairGeneratedCode, reviewGeneratedCode } from "@/lib/generation/tr4-quality-service";
 
 // Force dynamic route to enable streaming
 export const dynamic = 'force-dynamic';
-
-// Check if we're using Vercel AI Gateway
-const isUsingAIGateway = !!process.env.AI_GATEWAY_API_KEY;
-const aiGatewayBaseURL = 'https://ai-gateway.vercel.sh/v1';
-
-console.log('[generate-ai-code-stream] AI Gateway config:', {
-  isUsingAIGateway,
-  hasGroqKey: !!process.env.GROQ_API_KEY,
-  hasAIGatewayKey: !!process.env.AI_GATEWAY_API_KEY
-});
-
-const groq = createGroq({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GROQ_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
-
-const anthropic = createAnthropic({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.ANTHROPIC_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1'),
-});
-
-const googleGenerativeAI = createGoogleGenerativeAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : undefined,
-});
-
-const openai = createOpenAI({
-  apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.OPENAI_API_KEY,
-  baseURL: isUsingAIGateway ? aiGatewayBaseURL : process.env.OPENAI_BASE_URL,
-});
-
-const opencodeClient = process.env.OPENCODEGO_API_KEY ? createOpenAI({
-  apiKey: process.env.OPENCODEGO_API_KEY,
-  baseURL: process.env.OPENCODEGO_API_BASE?.endsWith('/v1') || process.env.OPENCODEGO_API_BASE?.endsWith('/v1/')
-    ? process.env.OPENCODEGO_API_BASE
-    : `${process.env.OPENCODEGO_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
-const tr4Client = process.env.TR4_API_KEY ? createOpenAI({
-  apiKey: process.env.TR4_API_KEY,
-  baseURL: process.env.TR4_API_BASE?.endsWith('/v1') || process.env.TR4_API_BASE?.endsWith('/v1/')
-    ? process.env.TR4_API_BASE
-    : `${process.env.TR4_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
-
-const clineClient = process.env.CLINE_API_KEY ? createOpenAI({
-  apiKey: process.env.CLINE_API_KEY,
-  baseURL: 'https://api.cline.bot/api/v1',
-}) : null;
-
-const agentRouterClient = process.env.AGENTROUTER_API_KEY ? createOpenAI({
-  apiKey: process.env.AGENTROUTER_API_KEY,
-  baseURL: process.env.AGENTROUTER_API_BASE?.endsWith('/v1') || process.env.AGENTROUTER_API_BASE?.endsWith('/v1/')
-    ? process.env.AGENTROUTER_API_BASE
-    : `${process.env.AGENTROUTER_API_BASE?.replace(/\/$/, '')}/v1`,
-}) : null;
 
 // Helper function to analyze user preferences from conversation history
 function analyzeUserPreferences(messages: ConversationMessage[]): {
@@ -115,55 +61,22 @@ declare global {
   var conversationState: ConversationState | null;
 }
 
-interface CustomRouteInfo {
-  client: any;
-  name: string;
-  provider: 'opencode' | 'tr4' | 'agentrouter';
-}
-
-function getModelProvider(model: string): CustomRouteInfo | null {
-  const m = model.toLowerCase();
-  
-  // TR4 Exclusive models from user screenshot
-  const tr4Exclusive = [
-    'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 
-    'gpt-image-1.5', 'gpt-image-2', 'gpt-oss-120b-medium', 'gpt-5.3-codex-spark', 'gpt-5.5',
-    'claude-opus-4-6-thinking', 'claude-sonnet-4-6',
-    'gemini-3-flash', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite', 'gemini-pro-agent', 
-    'gemini-3.5-flash-low', 'gemini-3.5-flash-extra-low', 'gemini-3-flash-agent', 'gemini-3.1-pro-low'
-  ];
-
-  // 1. Route TR4 models
-  if (tr4Exclusive.includes(m) && process.env.TR4_API_KEY && tr4Client) {
-    return { client: tr4Client, name: model, provider: 'tr4' };
-  }
-  
-  // 2. All other models (Kimi, Deepseek, Qwen, Minimax, GLM, etc.) route to Opencode
-  if (process.env.OPENCODEGO_API_KEY && opencodeClient) {
-    return { client: opencodeClient, name: model, provider: 'opencode' };
-  }
-
-  // Fallbacks
-  if (process.env.AGENTROUTER_API_KEY && agentRouterClient) {
-    return { client: agentRouterClient, name: model, provider: 'agentrouter' };
-  }
-
-  return null;
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false, planningModel, coderModel, generationIntent } = await request.json();
-    const agentContext = loadAgentContext({ intent: generationIntent, prompt, isEdit });
+    const { prompt, model, context, isEdit = false, planningModel, coderModel, qaModel, generationMode = "build", generationIntent } = await request.json();
+    const modelInput = sanitizeGenerationModelInput({ prompt, context: context ?? {} });
+    const modelPrompt = modelInput.prompt;
+    const modelContext = modelInput.context as Record<string, any>;
+    const agentContext = loadAgentContext({ intent: generationIntent, prompt: modelPrompt, isEdit });
     
     console.log('[generate-ai-code-stream] Received request:');
-    console.log('[generate-ai-code-stream] - prompt:', prompt);
+    console.log('[generate-ai-code-stream] - prompt:', modelPrompt);
     console.log('[generate-ai-code-stream] - isEdit:', isEdit);
     console.log('[generate-ai-code-stream] - generationIntent:', agentContext.intent);
     console.log('[generate-ai-code-stream] - agentSkills:', agentContext.skills.join(', '));
-    console.log('[generate-ai-code-stream] - context.sandboxId:', context?.sandboxId);
-    console.log('[generate-ai-code-stream] - context.currentFiles:', context?.currentFiles ? Object.keys(context.currentFiles) : 'none');
-    console.log('[generate-ai-code-stream] - currentFiles count:', context?.currentFiles ? Object.keys(context.currentFiles).length : 0);
+    console.log('[generate-ai-code-stream] - context.sandboxId:', modelContext.sandboxId);
+    console.log('[generate-ai-code-stream] - context.currentFiles:', modelContext.currentFiles ? Object.keys(modelContext.currentFiles) : 'none');
+    console.log('[generate-ai-code-stream] - currentFiles count:', modelContext.currentFiles ? Object.keys(modelContext.currentFiles).length : 0);
     
     // Initialize conversation state if not exists
     if (!global.conversationState) {
@@ -184,7 +97,7 @@ export async function POST(request: NextRequest) {
     const userMessage: ConversationMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
-      content: prompt,
+      content: modelPrompt,
       timestamp: Date.now(),
       metadata: {
         sandboxId: context?.sandboxId
@@ -205,8 +118,8 @@ export async function POST(request: NextRequest) {
     }
     
     // Debug: Show a sample of actual file content
-    if (context?.currentFiles && Object.keys(context.currentFiles).length > 0) {
-      const firstFile = Object.entries(context.currentFiles)[0];
+    if (modelContext.currentFiles && Object.keys(modelContext.currentFiles).length > 0) {
+      const firstFile = Object.entries(modelContext.currentFiles)[0];
       console.log('[generate-ai-code-stream] - sample file:', firstFile[0]);
       console.log('[generate-ai-code-stream] - sample content preview:', 
         typeof firstFile[1] === 'string' ? firstFile[1].substring(0, 100) + '...' : 'not a string');
@@ -218,6 +131,13 @@ export async function POST(request: NextRequest) {
         error: 'Prompt is required' 
       }, { status: 400 });
     }
+
+    assertOmniRouteConfigured();
+    const generationRole = generationMode === "plan" ? "planning" : "coder";
+    const selectedModel = generationRole === "planning" ? planningModel ?? model : coderModel ?? model;
+    const generationRoute = resolveTeamModelRoute(generationRole, selectedModel);
+    const activeLanguageModel = getLanguageModel(generationRoute);
+    const actualModel = generationRoute.model;
     
     // Create a stream for real-time updates
     const encoder = new TextEncoder();
@@ -268,7 +188,7 @@ export async function POST(request: NextRequest) {
               const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, manifest, model: planningModel || model })
+                body: JSON.stringify({ prompt: modelPrompt, manifest, model: planningModel || model })
               });
               
               if (intentResponse.ok) {
@@ -325,7 +245,7 @@ You have been given the EXACT location of the code to edit.
 - Reason: ${target.reason}
 
 Make ONLY the change requested by the user. Do not modify any other code.
-User request: "${prompt}"`;
+User request: "${modelPrompt}"`;
                     
                     // Set up edit context with just this one file
                     editContext = {
@@ -362,14 +282,14 @@ User request: "${prompt}"`;
               });
               // Fall back to old method on any error if we have a manifest
               if (manifest) {
-                editContext = selectFilesForEdit(prompt, manifest);
+                editContext = selectFilesForEdit(modelPrompt, manifest);
               }
             }
           } else {
             // Fall back to old method if AI analysis fails
             console.warn('[generate-ai-code-stream] AI intent analysis failed, falling back to keyword method');
             if (manifest) {
-              editContext = selectFilesForEdit(prompt, manifest);
+              editContext = selectFilesForEdit(modelPrompt, manifest);
             } else {
               console.log('[generate-ai-code-stream] No manifest available for fallback');
               await sendProgress({ 
@@ -413,7 +333,7 @@ User request: "${prompt}"`;
                       const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt, manifest, model: planningModel || model })
+                        body: JSON.stringify({ prompt: modelPrompt, manifest, model: planningModel || model })
                       });
                       
                       if (intentResponse.ok) {
@@ -426,7 +346,7 @@ User request: "${prompt}"`;
                         if (!searchPlan || searchPlan.searchTerms.length === 0) {
                           console.warn('[generate-ai-code-stream] No target files after fetch, searching for relevant files');
                           
-                          const promptLower = prompt.toLowerCase();
+                          const promptLower = modelPrompt.toLowerCase();
                           const allFilePaths = Object.keys(manifest.files);
                           
                           // Look for component names mentioned in the prompt
@@ -464,7 +384,7 @@ Edit Type: ${searchPlan?.editType || 'UPDATE_COMPONENT'}
 Reasoning: ${searchPlan?.reasoning || 'Modifying based on user request'}
 
 Files to Edit: ${targetFiles.join(', ') || 'To be determined'}
-User Request: "${prompt}"
+User Request: "${modelPrompt}"
 
 ## Your Mandatory Thought Process (Execute Internally):
 Before writing ANY code, you MUST follow these steps:
@@ -1012,16 +932,16 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         }
 
         // Build full prompt with context
-        let fullPrompt = prompt;
-        if (context) {
+        let fullPrompt = modelPrompt;
+        if (modelContext) {
           const contextParts = [];
           
-          if (context.sandboxId) {
-            contextParts.push(`Current sandbox ID: ${context.sandboxId}`);
+          if (modelContext.sandboxId) {
+            contextParts.push(`Current sandbox ID: ${modelContext.sandboxId}`);
           }
           
-          if (context.structure) {
-            contextParts.push(`Current file structure:\n${context.structure}`);
+          if (modelContext.structure) {
+            contextParts.push(`Current file structure:\n${modelContext.structure}`);
           }
           
           // Use backend file cache instead of frontend-provided files
@@ -1087,7 +1007,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                         const intentResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/analyze-edit-intent`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ prompt, manifest: filesData.manifest, model: planningModel || model })
+                          body: JSON.stringify({ prompt: modelPrompt, manifest: filesData.manifest, model: planningModel || model })
                         });
                         
                         if (intentResponse.ok) {
@@ -1096,7 +1016,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
                           
                           // Create edit context from AI analysis
                           // Note: We can't execute search here without file contents, so fall back to keyword method
-                          const fileContext = selectFilesForEdit(prompt, filesData.manifest);
+                          const fileContext = selectFilesForEdit(modelPrompt, filesData.manifest);
                           editContext = fileContext;
                           enhancedSystemPrompt = fileContext.systemPrompt;
                           
@@ -1161,7 +1081,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               }
               
               contextParts.push('\n🚨 CRITICAL INSTRUCTIONS - VIOLATION = FAILURE 🚨');
-              contextParts.push('1. Analyze the user request: "' + prompt + '"');
+              contextParts.push('1. Analyze the user request: "' + modelPrompt + '"');
               contextParts.push('2. Identify the MINIMUM number of files that need editing (usually just ONE)');
               contextParts.push('3. PRESERVE ALL EXISTING CONTENT in those files');
               contextParts.push('4. ONLY ADD/MODIFY the specific part requested');
@@ -1185,13 +1105,13 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               contextParts.push('If you DELETE or REWRITE existing functionality, you have FAILED');
               contextParts.push('ONLY change what was EXPLICITLY requested - NOTHING MORE');
             }
-          } else if (context.currentFiles && Object.keys(context.currentFiles).length > 0) {
+          } else if (modelContext.currentFiles && Object.keys(modelContext.currentFiles).length > 0) {
             // Fallback to frontend-provided files if backend cache is empty
             console.log('[generate-ai-code-stream] Warning: Backend cache empty, using frontend files');
             contextParts.push('\nEXISTING APPLICATION - DO NOT REGENERATE FROM SCRATCH');
             contextParts.push('Current project files (modify these, do not recreate):');
             
-            const fileEntries = Object.entries(context.currentFiles);
+            const fileEntries = Object.entries(modelContext.currentFiles);
             for (const [path, content] of fileEntries) {
               if (typeof content === 'string') {
                 contextParts.push(`\n<file path="${path}">\n${content}\n</file>`);
@@ -1234,10 +1154,10 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           }
           
           // Add conversation context (scraped websites, etc)
-          if (context.conversationContext) {
-            if (context.conversationContext.scrapedWebsites?.length > 0) {
+          if (modelContext.conversationContext) {
+            if (modelContext.conversationContext.scrapedWebsites?.length > 0) {
               contextParts.push('\nScraped Websites in Context:');
-              context.conversationContext.scrapedWebsites.forEach((site: any) => {
+              modelContext.conversationContext.scrapedWebsites.forEach((site: any) => {
                 contextParts.push(`\nURL: ${site.url}`);
                 contextParts.push(`Scraped: ${new Date(site.timestamp).toLocaleString()}`);
                 if (site.content) {
@@ -1250,8 +1170,8 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               });
             }
             
-            if (context.conversationContext.currentProject) {
-              contextParts.push(`\nCurrent Project: ${context.conversationContext.currentProject}`);
+            if (modelContext.conversationContext.currentProject) {
+              contextParts.push(`\nCurrent Project: ${modelContext.conversationContext.currentProject}`);
             }
           }
           
@@ -1267,7 +1187,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
               contextParts.push('// Full file content when creating new files');
               contextParts.push('</file>');
             }
-            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${prompt}`;
+            fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${modelPrompt}`;
           }
         }
         
@@ -1278,51 +1198,11 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         // Track packages that need to be installed
         const packagesToInstall: string[] = [];
         
-        // Determine which provider to use based on model
-        let modelProvider: any;
-        let actualModel: string = '';
-        let isUsingCustomRoute = false;
-
-        const isAnthropic = model.startsWith('anthropic/');
-        const isGoogle = model.startsWith('google/');
-        const isOpenAI = model.startsWith('openai/');
-        const isKimiGroq = model === 'moonshotai/kimi-k2-instruct-0905';
-
-        const customRoute = getModelProvider(model);
-        if (customRoute) {
-          isUsingCustomRoute = true;
-          modelProvider = customRoute.client;
-          actualModel = customRoute.name;
-          console.log(`[generate-ai-code-stream] Intercepting request: Using ${customRoute.provider.toUpperCase()} provider with model: ${actualModel}`);
-        }
-
-        if (!isUsingCustomRoute) {
-          modelProvider = isAnthropic ? anthropic : 
-                                (isOpenAI ? openai : 
-                                (isGoogle ? googleGenerativeAI : 
-                                (isKimiGroq ? groq : groq)));
-          
-          if (isAnthropic) {
-            actualModel = model.replace('anthropic/', '');
-          } else if (isOpenAI) {
-            actualModel = model.replace('openai/', '');
-          } else if (isKimiGroq) {
-            actualModel = 'moonshotai/kimi-k2-instruct-0905';
-          } else if (isGoogle) {
-            actualModel = model.replace('google/', '');
-          } else {
-            actualModel = model;
-          }
-          console.log(`[generate-ai-code-stream] Using standard provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
-        }
-
-        console.log(`[generate-ai-code-stream] Using provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'}, model: ${actualModel}`);
-        console.log(`[generate-ai-code-stream] AI Gateway enabled: ${isUsingAIGateway}`);
-        console.log(`[generate-ai-code-stream] Model string: ${model}`);
+        console.log(`[generate-ai-code-stream] Using OmniRoute model: ${actualModel}`);
 
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
-          model: modelProvider.chat ? modelProvider.chat(actualModel) : modelProvider(actualModel),
+          model: activeLanguageModel,
           messages: [
             { 
               role: 'system', 
@@ -1392,17 +1272,10 @@ It's better to have 3 complete files than 10 incomplete files.`
           ],
           maxTokens: 8192, // Reduce to ensure completion
           stopSequences: [] // Don't stop early
-          // Note: Neither Groq nor Anthropic models support tool/function calling in this context
-          // We use XML tags for package detection instead
+          // XML tags provide package detection without tool/function calls.
         };
         
-        // Add temperature for non-reasoning models (skip for custom routes to avoid bad request errors)
-        if (!model.startsWith('openai/gpt-5') && !isUsingCustomRoute) {
-          streamOptions.temperature = 0.7;
-        }
-        
-        // Add reasoning effort for GPT-5 models
-        if (isOpenAI) {
+        if (actualModel.startsWith("gpt-")) {
           streamOptions.experimental_providerMetadata = {
             openai: {
               reasoningEffort: 'high'
@@ -1413,7 +1286,7 @@ It's better to have 3 complete files than 10 incomplete files.`
         let result;
         let retryCount = 0;
         const maxRetries = 2;
-        const providerTimeoutMs = Number(process.env.AI_STREAM_TIMEOUT_MS || 60000);
+        const providerTimeoutMs = Number(process.env.AI_STREAM_TIMEOUT_MS || 180000);
         
         let generatedCode = '';
         let explanation = '';
@@ -1434,28 +1307,40 @@ It's better to have 3 complete files than 10 incomplete files.`
             let isInTag = false;
             let conversationalBuffer = '';
             let tagBuffer = '';
-            const attemptSignal = AbortSignal.timeout(providerTimeoutMs);
-            streamOptions.abortSignal = attemptSignal;
-            
-            result = await streamText(streamOptions);
-            
-            // Stream the response and parse for packages in real-time
-            for await (const textPart of result?.textStream || []) {
-              const text = textPart || '';
-              generatedCode += text;
-              currentFile += text;
+            const attemptController = new AbortController();
+            let streamTimedOut = false;
+            let streamInactivityTimeout: ReturnType<typeof setTimeout> | null = null;
+            const refreshStreamInactivityTimeout = () => {
+              if (streamInactivityTimeout) clearTimeout(streamInactivityTimeout);
+              streamInactivityTimeout = setTimeout(() => {
+                streamTimedOut = true;
+                attemptController.abort();
+              }, providerTimeoutMs);
+            };
+            refreshStreamInactivityTimeout();
+            streamOptions.abortSignal = attemptController.signal;
+
+            try {
+              result = await streamText(streamOptions);
+
+              // Stream the response and parse for packages in real-time
+              for await (const textPart of result?.textStream || []) {
+                refreshStreamInactivityTimeout();
+                const text = textPart || '';
+                generatedCode += text;
+                currentFile += text;
               
-              // Combine with buffer for tag detection
-              const searchText = tagBuffer + text;
+                // Combine with buffer for tag detection
+                const searchText = tagBuffer + text;
               
-              // Log streaming chunks to console
-              process.stdout.write(text);
+                // Log streaming chunks to console
+                process.stdout.write(text);
               
-              // Check if we're entering or leaving a tag
-              const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-              const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
+                // Check if we're entering or leaving a tag
+                const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
+                const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
               
-              if (hasOpenTag) {
+                if (hasOpenTag) {
                 // Send any buffered conversational text before the tag
                 if (conversationalBuffer.trim() && !isInTag) {
                   await sendProgress({ 
@@ -1465,32 +1350,32 @@ It's better to have 3 complete files than 10 incomplete files.`
                   conversationalBuffer = '';
                 }
                 isInTag = true;
-              }
+                }
               
-              if (hasCloseTag) {
-                isInTag = false;
-              }
+                if (hasCloseTag) {
+                  isInTag = false;
+                }
               
               // If we're not in a tag, buffer as conversational text
-              if (!isInTag && !hasOpenTag) {
-                conversationalBuffer += text;
-              }
-              
+                if (!isInTag && !hasOpenTag) {
+                  conversationalBuffer += text;
+                }
+
               // Stream the raw text for live preview
-              await sendProgress({ 
-                type: 'stream', 
-                text: text,
-                raw: true 
-              });
-              
+                await sendProgress({
+                  type: 'stream',
+                  text: text,
+                  raw: true
+                });
+
               // Debug: Log every 100 characters streamed
-              if (generatedCode.length % 100 < text.length) {
-                console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-              }
+                if (generatedCode.length % 100 < text.length) {
+                  console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
+                }
               
               // Check for package tags in buffered text (ONLY for edits, not initial generation)
-              let lastIndex = 0;
-              if (isEdit) {
+                let lastIndex = 0;
+                if (isEdit) {
                 const packageRegex = /<package>([^<]+)<\/package>/g;
                 let packageMatch;
                 
@@ -1507,23 +1392,23 @@ It's better to have 3 complete files than 10 incomplete files.`
                   }
                   lastIndex = packageMatch.index + packageMatch[0].length;
                 }
-              }
+                }
               
               // Keep unmatched portion in buffer for next iteration
-              tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+                tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
               
               // Check for file boundaries
-              if (text.includes('<file path="')) {
+                if (text.includes('<file path="')) {
                 const pathMatch = text.match(/<file path="([^"]+)"/);
                 if (pathMatch) {
                   currentFilePath = pathMatch[1];
                   isInFile = true;
                   currentFile = text;
                 }
-              }
+                }
               
               // Check for file end
-              if (isInFile && currentFile.includes('</file>')) {
+                if (isInFile && currentFile.includes('</file>')) {
                 isInFile = false;
                 
                 // Send component progress update
@@ -1546,11 +1431,19 @@ It's better to have 3 complete files than 10 incomplete files.`
                 
                 currentFile = '';
                 currentFilePath = '';
+                }
               }
+            } catch (streamError) {
+              if (streamTimedOut) {
+                throw new Error(`Provider stream inactivity timeout after ${providerTimeoutMs}ms`);
+              }
+              throw streamError;
+            } finally {
+              if (streamInactivityTimeout) clearTimeout(streamInactivityTimeout);
             }
 
-            if (attemptSignal.aborted) {
-              throw new Error(`Provider stream timeout after ${providerTimeoutMs}ms`);
+            if (streamTimedOut) {
+              throw new Error(`Provider stream inactivity timeout after ${providerTimeoutMs}ms`);
             }
             if (!generatedCode.trim()) {
               throw new Error('Provider returned an empty stream');
@@ -1661,27 +1554,6 @@ It's better to have 3 complete files than 10 incomplete files.`
           } catch (streamError: any) {
             console.error(`[generate-ai-code-stream] Error calling streamText/streaming (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
             
-            // Fallback from Opencode to Cline
-            if (isUsingCustomRoute && customRoute?.provider === 'opencode' && process.env.CLINE_API_KEY && clineClient) {
-              const clineModelName = `cline-pass/${customRoute.name}`;
-              const clineModel = clineClient.chat ? clineClient.chat(clineModelName) : clineClient(clineModelName);
-              
-              if (streamOptions.model !== clineModel) {
-                console.log(`[generate-ai-code-stream] Opencode failed. Switching to fallback provider: Cline with model: ${clineModelName}`);
-                await sendProgress({ 
-                  type: 'info', 
-                  message: 'Opencode failed, falling back to Cline API...' 
-                });
-                
-                streamOptions.model = clineModel;
-                actualModel = clineModelName;
-                retryCount = 0; // Reset retry count for the new provider
-                continue; // Retry with the new provider immediately
-              }
-            }
-            
-            // Check if this is a Groq service unavailable error
-            const isGroqServiceError = isKimiGroq && streamError.message?.includes('Service unavailable');
             const isRetryableError = streamError.message?.includes('Service unavailable') || 
                                     streamError.message?.includes('rate limit') ||
                                     streamError.message?.includes('timeout') ||
@@ -1700,28 +1572,14 @@ It's better to have 3 complete files than 10 incomplete files.`
               // Wait before retry with exponential backoff
               await new Promise(resolve => setTimeout(resolve, retryCount * 2000));
               
-              // If Groq fails, try switching to a fallback model
-              if (isGroqServiceError && retryCount === maxRetries) {
-                console.log('[generate-ai-code-stream] Groq service unavailable, falling back to GPT-4');
-                streamOptions.model = openai('gpt-4-turbo');
-                actualModel = 'gpt-4-turbo';
-              }
             } else {
               // Final error, send to user
-              await sendProgress({ 
-                type: 'error', 
-                message: `Failed to initialize ${isGoogle ? 'Gemini' : isAnthropic ? 'Claude' : isOpenAI ? 'GPT-5' : isKimiGroq ? 'Kimi (Groq)' : 'Groq'} streaming: ${streamError.message}` 
+              await sendProgress({
+                type: 'error',
+                error: `OmniRoute ${actualModel} failed: ${streamError.message}`
               });
-              
-              // If this is a Google model error, provide helpful info
-              if (isGoogle) {
-                await sendProgress({ 
-                  type: 'info', 
-                  message: 'Tip: Make sure your GEMINI_API_KEY is set correctly and has proper permissions.' 
-                });
-              }
-              
-              throw streamError;
+
+              throw new Error(`OmniRoute ${actualModel} failed: ${streamError.message}`);
             }
           }
         }
@@ -1838,47 +1696,19 @@ It's better to have 3 complete files than 10 incomplete files.`
                 const completionPrompt = `Complete the following file that was truncated. Provide the FULL file content.
                 
 File: ${filePath}
-Original request: ${prompt}
+Original request: ${modelPrompt}
                 
 Provide the complete file content without any truncation. Include all necessary imports, complete all functions, and close all tags properly.`;
                 
-                // Make a focused API call to complete this specific file
-                // Create a new client for the completion based on the provider
-                let completionClient: any;
-                if (model.includes('gpt') || model.includes('openai')) {
-                  completionClient = openai;
-                } else if (model.includes('claude')) {
-                  completionClient = anthropic;
-                } else if (model === 'moonshotai/kimi-k2-instruct-0905') {
-                  completionClient = groq;
-                } else {
-                  completionClient = groq;
-                }
-                
-                // Determine the correct model name for the completion
-                let completionModelName: string;
-                if (model === 'moonshotai/kimi-k2-instruct-0905') {
-                  completionModelName = 'moonshotai/kimi-k2-instruct-0905';
-                } else if (model.includes('openai')) {
-                  completionModelName = model.replace('openai/', '');
-                } else if (model.includes('anthropic')) {
-                  completionModelName = model.replace('anthropic/', '');
-                } else if (model.includes('google')) {
-                  completionModelName = model.replace('google/', '');
-                } else {
-                  completionModelName = model;
-                }
-                
                 const completionResult = await streamText({
-                  model: completionClient.chat ? completionClient.chat(completionModelName) : completionClient(completionModelName),
+                  model: getLanguageModel(resolveModelRoute("repair")),
                   messages: [
                     { 
                       role: 'system', 
                       content: 'You are completing a truncated file. Provide the complete, working file content.'
                     },
                     { role: 'user', content: completionPrompt }
-                  ],
-                  temperature: model.startsWith('openai/gpt-5') ? undefined : appConfig.ai.defaultTemperature
+                  ]
                 });
                 
                 // Get the full text from the stream
@@ -1927,13 +1757,55 @@ Provide the complete file content without any truncation. Include all necessary 
           }
         }
         
-        // Send completion with packages info
-        await sendProgress({ 
-          type: 'complete', 
+        const qaRoute = resolveTeamModelRoute("qa", qaModel);
+        const repairRoute = resolveModelRoute("repair");
+        const qaLanguageModel = getLanguageModel(qaRoute);
+        const repairLanguageModel = getLanguageModel(repairRoute);
+        const qualityResult = await runGenerationQualityGate({
+          candidate: generatedCode,
+          maxRepairs: 1,
+          onStage: async (stage, repairCount) => {
+            await sendProgress({
+              type: "status",
+              stage,
+              repairCount,
+              message: stage === "validating"
+                ? "QA validator is reviewing the generated files..."
+                : "Repair model is correcting blocking findings...",
+            });
+          },
+          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt: modelPrompt, candidate }),
+          repair: (candidate, validation) => repairGeneratedCode({ model: repairLanguageModel, candidate, validation }),
+        });
+
+        generatedCode = qualityResult.candidate;
+        files.length = 0;
+        componentCount = 0;
+        const validatedFiles = parseCompleteFileArtifact(generatedCode);
+        for (const { path: filePath, content } of validatedFiles) {
+          files.push({ path: filePath, content });
+          if (filePath.includes("components/")) {
+            componentCount += 1;
+          }
+        }
+
+        await sendProgress({
+          type: "validation",
+          validation: qualityResult.validation,
+          repairCount: qualityResult.repairCount,
+          message: "Quality gate passed",
+        });
+
+        // A generated candidate is available for application; terminal success
+        // belongs exclusively to the live apply/validation stream.
+        await sendProgress({
+          type: 'candidate-ready',
           generatedCode,
           explanation,
           files: files.length,
           components: componentCount,
+          validation: qualityResult.validation,
+          repairCount: qualityResult.repairCount,
           model,
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
@@ -1943,7 +1815,7 @@ Provide the complete file content without any truncation. Include all necessary 
         if (isEdit && editContext && global.conversationState) {
           const editRecord: ConversationEdit = {
             timestamp: Date.now(),
-            userRequest: prompt,
+            userRequest: modelPrompt,
             editType: editContext.editIntent.type,
             targetFiles: editContext.primaryFiles,
             confidence: editContext.editIntent.confidence,
@@ -1970,8 +1842,16 @@ Provide the complete file content without any truncation. Include all necessary 
       } catch (error) {
         console.error('[generate-ai-code-stream] Stream processing error:', error);
         
+        if (error instanceof GenerationQualityError) {
+          await sendProgress({
+            type: 'error',
+            error: error.message,
+            validation: error.validation,
+            repairCount: error.repairCount,
+            findings: error.validation.findings,
+          });
         // Check if it's a tool validation error
-        if ((error as any).message?.includes('tool call validation failed')) {
+        } else if ((error as any).message?.includes('tool call validation failed')) {
           console.error('[generate-ai-code-stream] Tool call validation error - this may be due to the AI model sending incorrect parameters');
           await sendProgress({ 
             type: 'warning', 
