@@ -917,6 +917,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     let applicationPassed = false;
     setLoading(true);
     log('Applying AI-generated code...');
+
+    const clearPendingApplyState = (status: string) => {
+      setCodeApplicationState({ stage: null });
+      setLoadingStage(null);
+      setIsCapturingScreenshot(false);
+      setIsPreparingDesign(false);
+      setGenerationProgress(prev => ({
+        ...prev,
+        isGenerating: false,
+        isStreaming: false,
+        isThinking: false,
+        isEdit: false,
+        status,
+      }));
+    };
     
     // Abort any active apply stream
     if (activeApplyStreamRef.current) {
@@ -1091,13 +1106,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     iframeRef.current.src = iframeRef.current.src;
                   }
                   addChatMessage(`Validation failed: ${applyErrorMessage}`, 'error');
-                  setCodeApplicationState({ stage: null });
-                  setGenerationProgress(prev => ({
-                    ...prev,
-                    isGenerating: false,
-                    isStreaming: false,
-                    status: data.message || data.error || 'Validation failed',
-                  }));
+                  clearPendingApplyState(data.message || data.error || 'Validation failed');
                   // Reset loading state on error
                   setLoading(false);
                   break;
@@ -1392,10 +1401,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         // A terminal apply error is authoritative: keep the old preview rather
         // than implying that an unvalidated candidate may have succeeded.
         if (!applyErrorMessage) {
+          clearPendingApplyState('Code application ended before validation completed.');
           addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');
         }
       }
     } catch (error: any) {
+      clearPendingApplyState(error.message || 'Failed to apply code');
       log(`Failed to apply code: ${error.message}`, 'error');
       addChatMessage(`Validation failed: ${error.message}`, 'error');
     } finally {

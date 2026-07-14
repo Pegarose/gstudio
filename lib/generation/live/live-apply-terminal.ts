@@ -14,6 +14,24 @@ export interface LiveApplyTerminalEvent {
   error?: string;
 }
 
+interface LegacySandboxFileCacheEntry {
+  content: string;
+  lastModified: number;
+}
+
+interface LegacySandboxState {
+  fileCache?: {
+    files: Record<string, LegacySandboxFileCacheEntry>;
+  } | null;
+}
+
+interface LegacyCandidatePathSnapshot {
+  path: string;
+  hadCacheEntry: boolean;
+  cacheEntry?: LegacySandboxFileCacheEntry;
+  wasTracked: boolean;
+}
+
 /**
  * Lets activation snapshot before the route mutates files, while preserving a
  * rejection path for every provider write failure. The route must call either
@@ -39,6 +57,76 @@ export function createLiveCandidateMutationBarrier() {
     waitUntilStarted: () => started,
     complete: () => resolveMutation?.(),
     fail: (reason: unknown) => rejectMutation?.(reason),
+  };
+}
+
+/**
+ * The legacy apply route still mirrors writes into process-local cache and
+ * file-tracking globals. Keep that compatibility state in lockstep with the
+ * sandbox rollback boundary without widening validation state or touching
+ * unrelated files.
+ */
+export function snapshotLegacyCandidateMutationState(input: {
+  sandboxState?: LegacySandboxState | null;
+  existingFiles?: Set<string> | null;
+  paths: readonly string[];
+}) {
+  const snapshots: LegacyCandidatePathSnapshot[] = [];
+  const capturedPaths = new Set<string>();
+
+  for (const candidatePath of input.paths) {
+    const path = posixPath.normalize(candidatePath);
+    if (!SAFE_CANDIDATE_PATH.test(path)) {
+      throw new Error(`Unsafe live candidate path: ${candidatePath}`);
+    }
+    if (capturedPaths.has(path)) continue;
+    capturedPaths.add(path);
+
+    const files = input.sandboxState?.fileCache?.files;
+    const hadCacheEntry = Boolean(files && Object.prototype.hasOwnProperty.call(files, path));
+    snapshots.push({
+      path,
+      hadCacheEntry,
+      cacheEntry: hadCacheEntry ? files?.[path] : undefined,
+      wasTracked: input.existingFiles?.has(path) ?? false,
+    });
+  }
+
+  return {
+    recordWrite(path: string, content: string): void {
+      const normalizedPath = posixPath.normalize(path);
+      if (!capturedPaths.has(normalizedPath)) {
+        throw new Error(`Live candidate path was not snapshotted: ${path}`);
+      }
+      const files = input.sandboxState?.fileCache?.files;
+      if (files) {
+        files[normalizedPath] = {
+          content,
+          lastModified: Date.now(),
+        };
+      }
+      input.existingFiles?.add(normalizedPath);
+    },
+
+    restore(): void {
+      const files = input.sandboxState?.fileCache?.files;
+      for (const snapshot of snapshots) {
+        if (files) {
+          if (snapshot.hadCacheEntry) {
+            files[snapshot.path] = snapshot.cacheEntry!;
+          } else {
+            delete files[snapshot.path];
+          }
+        }
+        if (input.existingFiles) {
+          if (snapshot.wasTracked) {
+            input.existingFiles.add(snapshot.path);
+          } else {
+            input.existingFiles.delete(snapshot.path);
+          }
+        }
+      }
+    },
   };
 }
 

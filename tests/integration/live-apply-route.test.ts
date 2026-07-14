@@ -51,6 +51,14 @@ test("route delegates provider writes to the rollback-aware live apply seam", ()
   assert.match(source, /candidateMutation\?\.fail\(error\);[\s\S]{0,220}await activationPromise/s);
 });
 
+test("route converts an activation persistence rejection into one safe terminal rollback sequence", () => {
+  const source = readFileSync(resolve(process.cwd(), "app/api/apply-ai-code-stream/route.ts"), "utf8");
+
+  assert.match(source, /activationError instanceof LiveActivationPersistenceError/);
+  assert.match(source, /emitLiveActivationTerminalEvents\(\{[\s\S]{0,260}activationError\.result/s);
+  assert.match(source, /emittedTerminalFailure = true/);
+});
+
 test("generation stream emits candidate-ready instead of terminal complete", () => {
   const source = readFileSync(resolve(process.cwd(), "app/api/generate-ai-code-stream/route.ts"), "utf8");
 

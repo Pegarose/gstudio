@@ -159,3 +159,17 @@ test('builder renders the truthful progress surface only from existing live stat
   assert.match(source, /generationProgress/);
   assert.match(source, /codeApplicationState/);
 });
+
+test('builder clears the active progress surface before reporting a non-terminal apply stream close', () => {
+  const applyStart = source.indexOf('const applyGeneratedCode = async (');
+  const applyEnd = source.indexOf('const fetchHistory = async () =>', applyStart);
+  const applyFlow = source.slice(applyStart, applyEnd);
+  const nonTerminalClose = applyFlow.indexOf('if (!applyErrorMessage)');
+  const clearState = applyFlow.indexOf('clearPendingApplyState(', nonTerminalClose);
+  const reportError = applyFlow.indexOf("addChatMessage('Code application ended before validation completed. The preview was not updated.', 'error');", nonTerminalClose);
+
+  assert.ok(nonTerminalClose >= 0);
+  assert.ok(clearState > nonTerminalClose);
+  assert.ok(reportError > clearState);
+  assert.match(applyFlow, /const clearPendingApplyState = \(status: string\) => \{[\s\S]{0,900}setCodeApplicationState\(\{ stage: null \}\);[\s\S]{0,900}setLoadingStage\(null\);[\s\S]{0,900}setIsCapturingScreenshot\(false\);[\s\S]{0,900}setIsPreparingDesign\(false\);[\s\S]{0,900}isGenerating: false,[\s\S]{0,900}isStreaming: false,/);
+});

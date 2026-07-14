@@ -26,6 +26,22 @@ export interface LiveActivationResult {
   rolledBack: boolean;
 }
 
+/**
+ * Persistence is intentionally terminal: callers must never fall back to a
+ * generic success/error event after sandbox rollback has already completed.
+ * The typed result lets the SSE boundary still describe that safe terminal
+ * state without attempting a second persistence write.
+ */
+export class LiveActivationPersistenceError extends Error {
+  readonly result: LiveActivationResult;
+
+  constructor(cause: unknown, result: LiveActivationResult) {
+    super(`Live validation terminal persistence failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "LiveActivationPersistenceError";
+    this.result = result;
+  }
+}
+
 export interface LiveValidationOrchestrator {
   validate(input: ValidationRunInput): Promise<ValidationReport>;
   repairAndRevalidate(input: RepairAndRevalidateInput): Promise<ValidationReport>;
@@ -49,7 +65,7 @@ export function createLiveValidationActivation({
   return {
     async activate(input: LiveActivationInput): Promise<LiveActivationResult> {
       const snapshots = await sandbox.snapshotFiles(input.sandboxId, input.snapshotPaths);
-      let report: ValidationReport;
+      let report: ValidationReport | undefined;
       let rollback: Awaited<ReturnType<typeof restoreOnce>> | undefined;
       let terminalPersistenceStarted = false;
 
@@ -88,7 +104,16 @@ export function createLiveValidationActivation({
         rollback ??= await restoreOnce(sandbox, input.sandboxId, snapshots);
 
         if (terminalPersistenceStarted) {
-          throw error;
+          const persistenceEvidence = ` ${rollback.evidence} Terminal validation persistence failed: ${error instanceof Error ? error.message : String(error)}`;
+          const failedReport = terminalizeFailedReport(
+            report?.finalStatus === "failed" ? report : terminalActivationFailureReport(error),
+            persistenceEvidence,
+          );
+          throw new LiveActivationPersistenceError(error, {
+            status: "failed",
+            report: failedReport,
+            rolledBack: rollback.completed,
+          });
         }
 
         report = terminalActivationFailureReport(error);

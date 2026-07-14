@@ -11,11 +11,12 @@ import { getLanguageModel } from '@/lib/ai/provider-manager';
 import { resolveModelRoute } from '@/lib/models/registry';
 import { createGenerationOrchestrator } from '@/lib/generation/orchestration/generation-orchestrator';
 import type { GenerationRepairPersistence } from '@/lib/generation/orchestration/generation-orchestrator';
-import { createLiveValidationActivation } from '@/lib/generation/live/live-validation-activation';
+import { createLiveValidationActivation, LiveActivationPersistenceError } from '@/lib/generation/live/live-validation-activation';
 import { createProductionValidationDependencies } from '@/lib/generation/live/production-validation';
 import {
   createLiveCandidateMutationBarrier,
   emitLiveActivationTerminalEvents,
+  snapshotLegacyCandidateMutationState,
   writeLiveCandidateFile,
 } from '@/lib/generation/live/live-apply-terminal';
 import { GenerationArtifactSchema, type GenerationArtifact, type ValidationReport } from '@/lib/generation/contracts/validation';
@@ -464,7 +465,9 @@ export async function POST(request: NextRequest) {
         errors: [] as string[]
       };
       let candidateMutation: ReturnType<typeof createLiveCandidateMutationBarrier> | undefined;
+      let legacyCandidateMutation: ReturnType<typeof snapshotLegacyCandidateMutationState> | undefined;
       let activationPromise: ReturnType<ReturnType<typeof createLiveValidationActivation>['activate']> | undefined;
+      let activationPassed = false;
 
       try {
         await sendProgress({
@@ -632,6 +635,11 @@ export async function POST(request: NextRequest) {
           },
         });
         const activation = createLiveValidationActivation({ sandbox: sandboxService, orchestrator });
+        legacyCandidateMutation = snapshotLegacyCandidateMutationState({
+          sandboxState: global.sandboxState,
+          existingFiles: global.existingFiles,
+          paths: artifact.files.map((file) => file.path),
+        });
         candidateMutation = createLiveCandidateMutationBarrier();
         activationPromise = activation.activate({
           artifact,
@@ -754,19 +762,12 @@ export async function POST(request: NextRequest) {
               content: fileContent,
             });
 
-            // Update file cache
-            if (global.sandboxState?.fileCache) {
-              global.sandboxState.fileCache.files[normalizedPath] = {
-                content: fileContent,
-                lastModified: Date.now()
-              };
-            }
+            legacyCandidateMutation.recordWrite(normalizedPath, fileContent);
 
             if (isUpdate) {
               if (results.filesUpdated) results.filesUpdated.push(normalizedPath);
             } else {
               if (results.filesCreated) results.filesCreated.push(normalizedPath);
-              if (global.existingFiles) global.existingFiles.add(normalizedPath);
             }
 
             await sendProgress({
@@ -800,6 +801,9 @@ export async function POST(request: NextRequest) {
         await sendProgress({ type: 'validation-started', message: 'Running deterministic live validation...' });
         candidateMutation.complete();
         const activationResult = await activationPromise;
+        if (activationResult.status === 'failed') {
+          legacyCandidateMutation.restore();
+        }
         const applicationPassed = await emitLiveActivationTerminalEvents({
           result: activationResult,
           send: sendProgress,
@@ -808,6 +812,7 @@ export async function POST(request: NextRequest) {
         if (!applicationPassed) {
           return;
         }
+        activationPassed = true;
 
         await sendProgress({
           type: 'complete',
@@ -850,6 +855,7 @@ export async function POST(request: NextRequest) {
           try {
             const activationResult = await activationPromise;
             if (activationResult.status === 'failed') {
+              legacyCandidateMutation?.restore();
               await emitLiveActivationTerminalEvents({
                 result: activationResult,
                 send: sendProgress,
@@ -858,10 +864,21 @@ export async function POST(request: NextRequest) {
               emittedTerminalFailure = true;
             }
           } catch (activationError) {
-            console.error('[apply-ai-code-stream] Live activation failed:', activationError);
+            if (activationError instanceof LiveActivationPersistenceError) {
+              legacyCandidateMutation?.restore();
+              await emitLiveActivationTerminalEvents({
+                result: activationError.result,
+                send: sendProgress,
+                failureMessage: safeValidationReason(activationError.result.report),
+              });
+              emittedTerminalFailure = true;
+            } else {
+              console.error('[apply-ai-code-stream] Live activation failed:', activationError);
+            }
           }
         }
-        if (!emittedTerminalFailure) {
+        if (!emittedTerminalFailure && !activationPassed) {
+          legacyCandidateMutation?.restore();
           await sendProgress({
             type: 'error',
             error: 'The candidate could not be applied and validated safely.'
