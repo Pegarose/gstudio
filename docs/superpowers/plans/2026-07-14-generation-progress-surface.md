@@ -132,7 +132,7 @@ git commit -m "feat: add generation progress surface"
 - Uses existing `loadingStage`, `isCapturingScreenshot`, `isPreparingDesign`, `generationProgress`, and `codeApplicationState` state only.
 - Depends on `docs/superpowers/plans/2026-07-14-live-generation-validation-activation.md` Task 3, which changes candidate completion into `candidate-ready` and makes apply completion authoritative.
 
-- [ ] **Step 1: Write failing builder contract tests**
+- [x] **Step 1: Write failing builder contract tests**
 
 ```js
 assert.match(source, /GenerationProgressSurface/);
@@ -144,13 +144,13 @@ assert.doesNotMatch(source, /addChatMessage\('AI recreation generated!', 'system
 
 The final assertion ensures a terminal success chat entry is not added before the authoritative apply path resolves.
 
-- [ ] **Step 2: Run the targeted test and verify RED**
+- [x] **Step 2: Run the targeted test and verify RED**
 
 Run: `node --test tests/generation-builder-ui.test.cjs`
 
 Expected: FAIL because the builder does not yet render the progress surface or use the new terminal event contract.
 
-- [ ] **Step 3: Integrate after live activation is available**
+- [x] **Step 3: Integrate after live activation is available**
 
 ```tsx
 <GenerationProgressSurface
@@ -169,7 +169,7 @@ Expected: FAIL because the builder does not yet render the progress surface or u
 
 Create a small local mapping helper in `app/generation/page.tsx`; it must map only existing state and must not own network calls. Replace the current dark screenshot-overlay skeleton and the generic inline generated-file spinner only while an operation is active. Keep the existing screenshot when available as a subdued background, never as fake chrome. When the apply stream emits `validation-started` or `validation-report`, map to `verify`; when it emits `complete`, remove the surface and render the existing success state. When it emits `error`, remove the surface and preserve the previous preview as required by the live activation plan.
 
-- [ ] **Step 4: Run targeted and type verification**
+- [x] **Step 4: Run targeted and type verification**
 
 Run:
 
@@ -181,7 +181,7 @@ git diff --check
 
 Expected: all tests pass and the builder source keeps candidate and terminal events separate.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/generation/page.tsx tests/generation-builder-ui.test.cjs

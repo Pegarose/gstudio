@@ -114,7 +114,7 @@ git commit -m "feat: snapshot sandbox files for validation rollback"
 - Consumes `GenerationArtifact`, durable generation context, `SandboxService`, and the existing validator/repair interfaces.
 - Produces one `LiveActivationResult` with `report`, `rolledBack`, and `status`.
 
-- [ ] **Step 1: Write failing activation tests**
+- [x] **Step 1: Write failing activation tests**
 
 ```ts
 test("failed deterministic validation restores the sandbox and persists one failed report", async () => {
@@ -148,13 +148,13 @@ test("missing clone or inspiration reference evidence fails without calling repa
 });
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `npx tsx --test tests/integration/live-validation-activation.test.ts`
 
 Expected: FAIL because the live activation module does not exist.
 
-- [ ] **Step 3: Implement the activation boundary**
+- [x] **Step 3: Implement the activation boundary**
 
 ```ts
 export interface LiveActivationInput extends ValidationRunInput {
@@ -185,7 +185,7 @@ For scratch/edit, return passed originality and honesty checks only when static 
 
 Add `setGenerationSandboxId(id, sandboxId)` and `persistGenerationTerminalValidation` repository wrappers; each uses parameterized SQL and existing allowlisted JSON storage.
 
-- [ ] **Step 4: Run focused tests and TypeScript**
+- [x] **Step 4: Run focused tests and TypeScript**
 
 Run:
 
@@ -196,7 +196,7 @@ npx tsc --noEmit
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add lib/generation/live lib/generation/orchestration/generation-orchestrator.ts lib/generation/repository.ts tests/integration/live-validation-activation.test.ts
@@ -219,7 +219,7 @@ git commit -m "feat: activate live deterministic generation validation"
 - Apply request gains `generationContext: { generationId?: string; projectId: string; mode: "scratch" | "edit" | "inspiration" | "clone"; prompt: string; targetUrl: string | null }`.
 - Candidate stream emits `candidate-ready`; only apply emits terminal `complete`.
 
-- [ ] **Step 1: Write failing route/client-contract tests**
+- [x] **Step 1: Write failing route/client-contract tests**
 
 ```ts
 test("apply route rejects an unscoped generated candidate", async () => {
@@ -239,13 +239,13 @@ test("generation stream emits candidate-ready instead of terminal complete", asy
 });
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `npx tsx --test tests/integration/live-apply-route.test.ts`
 
 Expected: FAIL because the route accepts unscoped applies and emits completion before live validation.
 
-- [ ] **Step 3: Implement server and UI wiring**
+- [x] **Step 3: Implement server and UI wiring**
 
 At the apply route boundary, Zod-parse `generationContext`; create the generation if it lacks an ID, set the sandbox ID, parse the existing response into a `GenerationArtifact`, and invoke the Task 2 activation boundary around the existing file-writing logic. Emit `validation-started`, `validation-report`, and rollback events. Emit `complete` only when `status === "passed"`; otherwise emit `error` with the safe report reason.
 
@@ -255,7 +255,7 @@ At the builder, carry the original user request, active project ID, mode, and ta
 
 Use `components/generation/GenerationProgressSurface.tsx` while candidate generation, application, or live validation is active. Map only existing builder state (`loadingStage`, capture/preparation flags, `generationProgress`, `codeApplicationState`, and apply events) into its six phases. The surface replaces the current empty/skeleton workspace only during active work; it is removed on terminal apply completion or error. It remains presentational and must not create sandbox, generation, or validation state. Add static builder coverage proving that the surface is rendered and that `candidate-ready`, `validation-report`, and terminal apply `complete` remain distinct.
 
-- [ ] **Step 4: Run focused tests and legacy stream tests**
+- [x] **Step 4: Run focused tests and legacy stream tests**
 
 Run:
 
@@ -267,7 +267,7 @@ npx tsc --noEmit
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/api/apply-ai-code-stream/route.ts app/api/generate-ai-code-stream/route.ts app/generation/page.tsx tests/integration/live-apply-route.test.ts tests/brand-guidelines.test.cjs
@@ -289,7 +289,7 @@ git commit -m "feat: gate live applies on deterministic validation"
 **Interfaces:**
 - Keeps `tests/e2e/screenshot-mask.css` as the only permitted dynamic-region exclusion.
 
-- [ ] **Step 1: Write the failing strict option and unmasked-pixel regressions**
+- [x] **Step 1: Write the failing strict option and unmasked-pixel regressions**
 
 ```ts
 import assert from "node:assert/strict";
@@ -309,7 +309,7 @@ test("an unmasked one-pixel difference is rejected by the release matcher", asyn
 });
 ```
 
-- [ ] **Step 2: Run it and verify RED**
+- [x] **Step 2: Run it and verify RED**
 
 Run:
 
@@ -319,11 +319,11 @@ npx tsx --test tests/e2e/screenshot-options.test.ts
 
 Expected: FAIL because `releaseScreenshotOptions` does not exist. After it is introduced with the legacy `0.01` value, the assertion must fail with `0.01 !== 0` before the production test is changed.
 
-- [ ] **Step 3: Set the release tolerance to zero and regenerate baselines**
+- [x] **Step 3: Set the release tolerance to zero and regenerate baselines**
 
 Create and import `releaseScreenshotOptions` with `{ fullPage: true, animations: "disabled", stylePath: path.resolve("tests/e2e/screenshot-mask.css"), maxDiffPixelRatio: 0 }`. Keep the existing narrow CSS mask unchanged. The fixture's `variant=one-pixel-diff` server-side branch must render exactly one unmasked, one-device-pixel SVG rect. `strict-screenshot-mask.spec.ts` asserts that variant is rejected, while the normal fixture still passes because its only dynamic marker is targeted by the mask. Regenerate all five normal fixture baselines using the owned isolated 9021 Playwright config, then remove the temporary config.
 
-- [ ] **Step 4: Run isolated E2E verification**
+- [x] **Step 4: Run isolated E2E verification**
 
 Run:
 
@@ -335,7 +335,7 @@ npx tsx --test tests/e2e/screenshot-options.test.ts
 
 Expected: stable fixture PASS at all five widths; explicit unmasked-diff test FAIL in RED evidence and masked dynamic case PASS in GREEN coverage.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/test-fixtures/passing/page.tsx tests/e2e/quality-gates.spec.ts tests/e2e/screenshot-options.ts tests/e2e/screenshot-options.test.ts tests/e2e/strict-screenshot-mask.spec.ts tests/e2e/quality-gates.spec.ts-snapshots
