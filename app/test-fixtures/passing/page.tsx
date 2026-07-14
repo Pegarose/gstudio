@@ -218,7 +218,7 @@ export default async function PassingQualityFixture({ searchParams }: PassingQua
           viewBox="0 0 1 1"
           width="1"
         >
-          <rect fill="#1c1b1a" height="1" width="1" />
+          <rect fill="#faf9f7" height="1" width="1" />
         </svg>
       ) : null}
     </main>
