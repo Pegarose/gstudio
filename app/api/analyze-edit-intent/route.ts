@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager';
+import { assertOmniRouteConfigured, getLanguageModel } from '@/lib/ai/provider-manager';
 import { resolveModelRoute } from '@/lib/models/registry';
 // import type { FileManifest } from '@/types/file-manifest'; // Type is used implicitly through manifest parameter
 
@@ -73,10 +73,10 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    assertTr4Configured();
+    assertOmniRouteConfigured();
     const intentRoute = resolveModelRoute("intent");
     const aiModel = getLanguageModel(intentRoute);
-    console.log(`[analyze-edit-intent] Using TR4 intent model: ${intentRoute.model}`);
+    console.log(`[analyze-edit-intent] Using OmniRoute intent model: ${intentRoute.model}`);
     
     console.log('[analyze-edit-intent] Analyzing prompt:', prompt);
     console.log('[analyze-edit-intent] File summary preview:', fileSummary.split('\n').slice(0, 5).join('\n'));

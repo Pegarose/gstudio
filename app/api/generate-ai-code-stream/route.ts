@@ -7,7 +7,7 @@ import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
-import { assertTr4Configured, getLanguageModel } from '@/lib/ai/provider-manager';
+import { assertOmniRouteConfigured, getLanguageModel } from '@/lib/ai/provider-manager';
 import { resolveModelRoute } from '@/lib/models/registry';
 import { resolveTeamModelRoute } from '@/lib/models/team-model-policy';
 import { GenerationQualityError, runGenerationQualityGate } from "@/lib/generation/quality-gate";
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    assertTr4Configured();
+    assertOmniRouteConfigured();
     const generationRole = generationMode === "plan" ? "planning" : "coder";
     const selectedModel = generationRole === "planning" ? planningModel ?? model : coderModel ?? model;
     const generationRoute = resolveTeamModelRoute(generationRole, selectedModel);
@@ -1198,7 +1198,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         // Track packages that need to be installed
         const packagesToInstall: string[] = [];
         
-        console.log(`[generate-ai-code-stream] Using TR4 model: ${actualModel}`);
+        console.log(`[generate-ai-code-stream] Using OmniRoute model: ${actualModel}`);
 
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
@@ -1576,10 +1576,10 @@ It's better to have 3 complete files than 10 incomplete files.`
               // Final error, send to user
               await sendProgress({
                 type: 'error',
-                error: `TR4 ${actualModel} failed: ${streamError.message}`
+                error: `OmniRoute ${actualModel} failed: ${streamError.message}`
               });
 
-              throw new Error(`TR4 ${actualModel} failed: ${streamError.message}`);
+              throw new Error(`OmniRoute ${actualModel} failed: ${streamError.message}`);
             }
           }
         }

@@ -56,12 +56,13 @@ test('generation stream timeout measures inactivity instead of total duration', 
   assert.doesNotMatch(route, /AbortSignal\.timeout\(providerTimeoutMs\)/);
 });
 
-test('generation and edit intent routes resolve only configured TR4 models', () => {
+test('generation and edit intent routes resolve only configured OmniRoute models', () => {
   assert.match(route, /resolveTeamModelRoute/);
   assert.match(route, /getLanguageModel/);
   assert.match(intentRoute, /resolveModelRoute\("intent"\)/);
-  assert.match(route, /assertTr4Configured\(\)/);
-  assert.match(intentRoute, /assertTr4Configured\(\)/);
+  assert.match(route, /assertOmniRouteConfigured\(\)/);
+  assert.match(intentRoute, /assertOmniRouteConfigured\(\)/);
+  assert.match(providerContracts, /["']omniroute["']/);
   assert.doesNotMatch(route, /OPENCODEGO_API_KEY|opencodeClient|provider === 'opencode'/);
   assert.doesNotMatch(intentRoute, /OPENCODEGO_API_KEY|opencodeClient|provider === 'opencode'/);
 });

@@ -4,28 +4,26 @@ import type { ModelRole, ModelRoute } from '@/lib/models/contracts';
 // This file contains all configurable settings for the application
 
 const teamModelDefaults = {
-  planning: "gpt-5.6-terra",
-  coder: "gpt-5.3-codex-spark",
-  qa: "codex-auto-review",
+  planning: "auto/best-reasoning",
+  coder: "auto/best-coding",
+  qa: "auto/best-reasoning",
 } as const;
 
 const teamModelOptions = {
   planning: [
-    "gpt-5.6-terra",
-    "gpt-5.4",
-    "claude-opus-4-6-thinking",
-    "claude-sonnet-4-6",
+    "auto/best-reasoning",
+    "auto/pro-reasoning",
+    "auto/best-fast",
   ],
   coder: [
-    "gpt-5.3-codex-spark",
-    "gpt-5.6-sol",
-    "kimi-k2.7-code-highspeed",
-    "claude-sonnet-4-6",
+    "auto/best-coding",
+    "auto/pro-coding",
+    "auto/best-coding-fast",
   ],
   qa: [
-    "codex-auto-review",
-    "gpt-5.6-sol",
-    "gpt-5.4-mini",
+    "auto/best-reasoning",
+    "auto/best-coding",
+    "auto/best-fast",
   ],
 } as const;
 
@@ -91,65 +89,61 @@ export const appConfig = {
 
     modelRoutes: [
       {
-        id: 'intent-tr4', provider: 'tr4', model: 'gpt-5.4-mini',
+        id: 'intent-omniroute', provider: 'omniroute', model: 'auto/best-fast',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 30_000, fallbacks: [],
       },
       {
-        id: 'vision-tr4', provider: 'tr4', model: 'gemini-3.1-flash-image',
+        id: 'vision-omniroute', provider: 'omniroute', model: 'auto/best-vision',
         capabilities: { vision: true, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 45_000, fallbacks: [],
       },
       {
-        id: 'design-tr4', provider: 'tr4', model: 'gemini-3.1-pro-low',
+        id: 'design-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 45_000, fallbacks: [],
       },
       {
-        id: 'planning-tr4', provider: 'tr4', model: 'gpt-5.6-terra',
+        id: 'planning-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 60_000, fallbacks: [],
       },
       {
-        id: 'coder-tr4', provider: 'tr4', model: 'gpt-5.3-codex-spark',
+        id: 'coder-omniroute', provider: 'omniroute', model: 'auto/best-coding',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 180_000, fallbacks: [],
       },
       {
-        id: 'qa-tr4', provider: 'tr4', model: 'codex-auto-review',
+        id: 'qa-omniroute', provider: 'omniroute', model: 'auto/best-reasoning',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 90_000, fallbacks: [],
       },
       {
-        id: 'repair-tr4', provider: 'tr4', model: 'gpt-5.6-sol',
+        id: 'repair-omniroute', provider: 'omniroute', model: 'auto/best-coding',
         capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false },
         timeoutMs: 180_000, fallbacks: [],
       },
     ] satisfies readonly ModelRoute[],
 
     modelRoleRoutes: {
-      intent: 'intent-tr4',
-      'vision-planner': 'vision-tr4',
-      'design-planner': 'design-tr4',
-      planning: 'planning-tr4',
-      coder: 'coder-tr4',
-      qa: 'qa-tr4',
-      repair: 'repair-tr4',
+      intent: 'intent-omniroute',
+      'vision-planner': 'vision-omniroute',
+      'design-planner': 'design-omniroute',
+      planning: 'planning-omniroute',
+      coder: 'coder-omniroute',
+      qa: 'qa-omniroute',
+      repair: 'repair-omniroute',
     } satisfies Record<ModelRole, string>,
     
     // Model display names
     modelDisplayNames: {
-      'gpt-5.4': 'GPT-5.4 (TR4)',
-      'gpt-5.4-mini': 'GPT-5.4 Mini (TR4)',
-      'gpt-5.6-sol': 'GPT-5.6 Sol (TR4)',
-      'gpt-5.3-codex-spark': 'GPT-5.3 Codex Spark (TR4)',
-      'gpt-5.6-terra': 'GPT-5.6 Terra (TR4)',
-      'claude-sonnet-4-6': 'Claude Sonnet 4.6 (TR4)',
-      'claude-opus-4-6-thinking': 'Claude Opus 4.6 Thinking (TR4)',
-      'gemini-3.1-pro-low': 'Gemini 3.1 Pro Low (TR4)',
-      'gemini-3.1-flash-image': 'Gemini 3.1 Flash Image (TR4)',
-      'kimi-k2.7-code-highspeed': 'Kimi K2.7 Code Highspeed (TR4)',
-      'codex-auto-review': 'Codex Auto Review (TR4)',
+      'auto/best-fast': 'OmniRoute · Best Fast',
+      'auto/best-reasoning': 'OmniRoute · Best Reasoning',
+      'auto/pro-reasoning': 'OmniRoute · Pro Reasoning',
+      'auto/best-coding': 'OmniRoute · Best Coding',
+      'auto/pro-coding': 'OmniRoute · Pro Coding',
+      'auto/best-coding-fast': 'OmniRoute · Best Coding Fast',
+      'auto/best-vision': 'OmniRoute · Best Vision',
     } as Record<string, string>,
     
     // Model API configuration

@@ -22,8 +22,8 @@ test("router throws when no route satisfies required capabilities", () => {
 
 test("router follows a configured fallback route", () => {
   const router = createModelRouter([
-    { id: "primary-code", provider: "tr4", model: "gpt-5.3-codex-spark", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["repair-code"] },
-    { id: "repair-code", provider: "tr4", model: "gpt-5.6-sol", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
+    { id: "primary-code", provider: "omniroute", model: "auto/best-coding", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: ["repair-code"] },
+    { id: "repair-code", provider: "omniroute", model: "auto/best-coding", capabilities: { vision: false, structuredOutput: true, reasoning: true, toolUse: false }, timeoutMs: 45_000, fallbacks: [] },
   ]);
 
   assert.equal(router.fallbacksFor("primary-code", { structuredOutput: true })[0].id, "repair-code");
@@ -37,10 +37,10 @@ test("configured active routes do not define fallbacks", () => {
   }
 });
 
-test("configured role registry contains only TR4 routes", () => {
+test("configured role registry contains only OmniRoute routes", () => {
   const configuredProviders = new Set(modelRegistry.map((route) => route.provider));
 
-  assert.deepEqual(configuredProviders, new Set(["tr4"]));
+  assert.deepEqual(configuredProviders, new Set(["omniroute"]));
 });
 
 test("preferred incompatible routes use ordered compatible fallbacks before registry order", () => {
@@ -65,18 +65,18 @@ test("preferred incompatible routes fall back to matching registry order when th
   assert.equal(router.resolve({ vision: true }, "preferred").id, "first-registry-vision");
 });
 
-test("resolveModelRoute selects the approved TR4 role defaults", () => {
-  assert.equal(resolveModelRoute("planning").model, "gpt-5.6-terra");
-  assert.equal(resolveModelRoute("coder").model, "gpt-5.3-codex-spark");
-  assert.equal(resolveModelRoute("qa").model, "codex-auto-review");
-  assert.equal(resolveModelRoute("repair").model, "gpt-5.6-sol");
+test("resolveModelRoute selects the approved OmniRoute role defaults", () => {
+  assert.equal(resolveModelRoute("planning").model, "auto/best-reasoning");
+  assert.equal(resolveModelRoute("coder").model, "auto/best-coding");
+  assert.equal(resolveModelRoute("qa").model, "auto/best-reasoning");
+  assert.equal(resolveModelRoute("repair").model, "auto/best-coding");
 });
 
-test("TR4 language model normalizes the configured API base URL", () => {
-  const previousApiBase = process.env.TR4_API_BASE;
-  const previousApiKey = process.env.TR4_API_KEY;
-  process.env.TR4_API_BASE = "https://api.tr4.net";
-  process.env.TR4_API_KEY = "test-key";
+test("OmniRoute language model normalizes the configured API base URL", () => {
+  const previousApiBase = process.env.OMNIROUTE_API_BASE;
+  const previousApiKey = process.env.OMNIROUTE_API_KEY;
+  process.env.OMNIROUTE_API_BASE = "https://omniroute.tr4.net";
+  process.env.OMNIROUTE_API_KEY = "test-key";
 
   try {
     const languageModel = getLanguageModel(resolveModelRoute("coder"));
@@ -85,14 +85,14 @@ test("TR4 language model normalizes the configured API base URL", () => {
     };
 
     assert.equal(
-      internalModel.config.url({ path: "/chat/completions" }).toString().startsWith("https://api.tr4.net/v1"),
+      internalModel.config.url({ path: "/chat/completions" }).toString().startsWith("https://omniroute.tr4.net/v1"),
       true,
     );
   } finally {
-    if (previousApiBase === undefined) delete process.env.TR4_API_BASE;
-    else process.env.TR4_API_BASE = previousApiBase;
-    if (previousApiKey === undefined) delete process.env.TR4_API_KEY;
-    else process.env.TR4_API_KEY = previousApiKey;
+    if (previousApiBase === undefined) delete process.env.OMNIROUTE_API_BASE;
+    else process.env.OMNIROUTE_API_BASE = previousApiBase;
+    if (previousApiKey === undefined) delete process.env.OMNIROUTE_API_KEY;
+    else process.env.OMNIROUTE_API_KEY = previousApiKey;
   }
 });
 

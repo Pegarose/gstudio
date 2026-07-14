@@ -10,7 +10,7 @@ export type ModelProvider =
   | "anthropic"
   | "groq"
   | "google"
-  | "tr4"
+  | "omniroute"
   | "agentrouter"
   | "vercel-gateway";
 

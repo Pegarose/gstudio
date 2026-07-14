@@ -25,9 +25,9 @@ function withV1Suffix(baseURL: string | undefined): string | undefined {
   return `${baseURL.replace(/\/$/, '')}/v1`;
 }
 
-export function assertTr4Configured(): void {
-  if (!process.env.TR4_API_KEY || !process.env.TR4_API_BASE) {
-    throw new Error("TR4_API_KEY and TR4_API_BASE must be configured before generation");
+export function assertOmniRouteConfigured(): void {
+  if (!process.env.OMNIROUTE_API_KEY || !process.env.OMNIROUTE_API_BASE) {
+    throw new Error("OMNIROUTE_API_KEY and OMNIROUTE_API_BASE must be configured before generation");
   }
 }
 
@@ -45,8 +45,8 @@ function getProviderSettings(
       return { apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GROQ_API_KEY, baseURL: process.env.AI_GATEWAY_API_KEY ? aiGatewayBaseURL : process.env.GROQ_BASE_URL };
     case 'google':
       return { apiKey: process.env.AI_GATEWAY_API_KEY ?? process.env.GEMINI_API_KEY, baseURL: process.env.AI_GATEWAY_API_KEY ? aiGatewayBaseURL : process.env.GEMINI_BASE_URL };
-    case 'tr4':
-      return { apiKey: process.env.TR4_API_KEY, baseURL: withV1Suffix(process.env.TR4_API_BASE) };
+    case 'omniroute':
+      return { apiKey: process.env.OMNIROUTE_API_KEY, baseURL: withV1Suffix(process.env.OMNIROUTE_API_BASE) };
     case 'agentrouter':
       return { apiKey: process.env.AGENTROUTER_API_KEY, baseURL: withV1Suffix(process.env.AGENTROUTER_API_BASE) };
     case 'vercel-gateway':
