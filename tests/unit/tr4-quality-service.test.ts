@@ -51,6 +51,7 @@ test("reviewGeneratedCode normalizes a JSON-encoded findings array from an OpenA
 
   assert.equal(validation.pass, true);
   assert.deepEqual(validation.findings, []);
+  assert.equal(model.doGenerateCalls[0].maxOutputTokens, 2048);
   assert.equal(model.doGenerateCalls[0].abortSignal instanceof AbortSignal, true);
 });
 

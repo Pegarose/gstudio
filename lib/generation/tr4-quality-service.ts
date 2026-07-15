@@ -159,6 +159,7 @@ export async function reviewGeneratedCode({
       model,
       schema: GenerationValidationSchema,
       messages: buildReviewMessages({ prompt, candidate }),
+      maxOutputTokens: 2048,
       abortSignal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     });
 
