@@ -115,6 +115,32 @@ interface ScrapeData {
   error?: string;
 }
 
+type BuilderFailure = {
+  message?: unknown;
+  errorClass?: string;
+  failureClass?: string;
+  validation?: { repairEligibility?: { failureClass?: string } };
+};
+
+function formatBuilderFailure(error: unknown, fallback = 'The build could not be completed.') {
+  const typed = (error && typeof error === 'object' ? error : {}) as BuilderFailure;
+  const rawMessage = typeof typed.message === 'string' ? typed.message : '';
+  const failureClass = typed.errorClass
+    || typed.failureClass
+    || typed.validation?.repairEligibility?.failureClass;
+
+  if (failureClass === 'sandbox-infrastructure' || /sandbox infrastructure|chromium executable|browser validation/i.test(rawMessage)) {
+    return 'Sandbox infrastructure is temporarily unavailable. Retry sandbox validation.';
+  }
+  if (failureClass === 'static-rule' || /quality gate|static validation/i.test(rawMessage)) {
+    return 'The generated code failed a quality check. Refine the brief and retry the build.';
+  }
+  if (failureClass === 'provider-unavailable') {
+    return 'The model provider is unavailable. Check the OmniRoute connection and retry.';
+  }
+  return rawMessage || fallback;
+}
+
 function AISandboxPage() {
   const [sandboxData, setSandboxData] = useState<SandboxData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -889,13 +915,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         // Return the sandbox data so it can be used immediately
         return data;
       } else {
-        throw new Error(data.error || 'Unknown error');
+        const sandboxError = new Error(data.error || 'Unknown sandbox error') as Error & { errorClass?: string };
+        sandboxError.errorClass = data.errorClass;
+        throw sandboxError;
       }
     } catch (error: any) {
       console.error('[createSandbox] Error:', error);
       updateStatus('Error', false);
-      log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+      const failureMessage = formatBuilderFailure(error, 'The sandbox could not be created.');
+      log(failureMessage, 'error');
+      addChatMessage(failureMessage, 'error');
       throw error;
     } finally {
       setLoading(false);
@@ -1116,7 +1145,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   if (iframeRef.current) {
                     iframeRef.current.src = iframeRef.current.src;
                   }
-                  addChatMessage(`Validation failed: ${applyErrorMessage}`, 'error');
+                  addChatMessage(formatBuilderFailure({
+                    message: applyErrorMessage,
+                    errorClass: data.errorClass,
+                    failureClass: data.failureClass,
+                    validation: data.report,
+                  }, 'Validation failed.'), 'error');
                   clearPendingApplyState(data.message || data.error || 'Validation failed');
                   // Reset loading state on error
                   setLoading(false);
@@ -1433,7 +1467,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     } catch (error: any) {
       clearPendingApplyState(error.message || 'Failed to apply code');
       log(`Failed to apply code: ${error.message}`, 'error');
-      addChatMessage(`Validation failed: ${error.message}`, 'error');
+      addChatMessage(formatBuilderFailure(error, 'Validation failed.'), 'error');
     } finally {
       setLoading(false);
       // Clear isEdit flag after applying code
@@ -2259,7 +2293,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       sandboxCreating = true;
       addChatMessage('Creating sandbox while I plan your app...', 'system');
       sandboxPromise = createSandbox(true).catch((error: any) => {
-        addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+        addChatMessage(formatBuilderFailure(error, 'The sandbox could not be created.'), 'error');
         throw error;
       });
     }
@@ -3122,11 +3156,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //           setActiveTab('preview');
 //         }, 1000); // Show completion briefly then switch
 //       } else {
-//         throw new Error('Failed to generate recreation');
+//         throw new Error('No candidate was returned for this build.');
 //       }
 //       
 //     } catch (error: any) {
-//       addChatMessage(`Clone generation failed: ${error.message}`, 'system');
+//       addChatMessage(`Reference build failed: ${error.message}`, 'error');
 //       setUrlStatus([]);
 //       setIsPreparingDesign(false);
 //       // Clear all states on error
@@ -3855,7 +3889,7 @@ Focus on the key sections and content, making it clean and modern.`;
 
           const successContent = isInspirationMode
             ? `Built an original application using visual direction extracted from ${cleanUrl}. You can now refine the layout, content, or interactions.`
-            : `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`;
+            : `Built your original React application from scratch${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}. You can now refine the layout, content, or interactions.`;
 
           setChatMessages(prev => {
             if (prev.length === 0) return prev;
@@ -3887,7 +3921,7 @@ Focus on the key sections and content, making it clean and modern.`;
             }]
           }));
         } else {
-          throw new Error('Failed to generate recreation');
+          throw new Error('No candidate was returned for this build.');
         }
         
         setUrlInput('');
@@ -3917,12 +3951,8 @@ Focus on the key sections and content, making it clean and modern.`;
           setActiveTab('preview');
         }, 1000); // Show completion briefly then switch
       } catch (error: any) {
-        const failurePrefix = isFromScratch
-          ? 'Generation failed'
-          : isInspirationMode
-            ? 'Inspiration build failed'
-            : 'Clone generation failed';
-        const failureMessage = `${failurePrefix}: ${error.message}`;
+        const failurePrefix = isFromScratch ? 'Generation failed' : 'Reference build failed';
+        const failureMessage = `${failurePrefix}: ${formatBuilderFailure(error, 'The build could not be completed.')}`;
         setChatMessages(prev => {
           const next = [...prev];
           let replacedThinkingMessage = false;

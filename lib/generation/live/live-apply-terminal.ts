@@ -12,6 +12,7 @@ export interface LiveApplyTerminalEvent {
   rolledBack?: boolean;
   message?: string;
   error?: string;
+  errorClass?: string;
 }
 
 interface LegacySandboxFileCacheEntry {
@@ -200,6 +201,7 @@ export async function emitLiveActivationTerminalEvents(input: {
     type: "error",
     error: input.failureMessage,
     report: input.result.report,
+    errorClass: input.result.report.repairEligibility?.failureClass,
   });
   return false;
 }

@@ -94,6 +94,13 @@ test('builder normalizes legacy clone sessions to the inspiration reference flow
   assert.match(source, /visual reference|original build/i);
 });
 
+test('builder turns typed infrastructure failures into an actionable retry message', () => {
+  assert.match(source, /errorClass/);
+  assert.match(source, /sandbox-infrastructure/);
+  assert.match(source, /Retry sandbox/i);
+  assert.doesNotMatch(source, /Clone generation failed/);
+});
+
 test('builder creates a project before requesting an explicit-ID sandbox', () => {
   const source = readFileSync(builderPage, 'utf8');
 
@@ -173,7 +180,7 @@ test('builder treats a generated candidate as pending until the apply terminal c
   assert.doesNotMatch(chatGeneration, /Code generated!/);
   assert.doesNotMatch(source, /Code generated!/);
   assert.doesNotMatch(chatGeneration, /appliedFiles:\s*isEdit/);
-  assert.match(applyError, /addChatMessage\(`Validation failed: \$\{applyErrorMessage\}`, 'error'\)/);
+  assert.match(applyError, /formatBuilderFailure\([\s\S]{0,420}errorClass: data\.errorClass/);
   assert.doesNotMatch(applyError, /successfully|Code generated|Applied \$\{/i);
 });
 
