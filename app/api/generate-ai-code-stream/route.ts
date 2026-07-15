@@ -1139,15 +1139,10 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
             contextParts.push('✅ ALWAYS: One <file> tag per file with COMPLETE content');
             contextParts.push('✅ ALWAYS: Include EVERY file you modified');
           } else if (!hasBackendFiles) {
-            // First generation mode - make it beautiful!
-            contextParts.push('\n🎨 FIRST GENERATION MODE - CREATE SOMETHING BEAUTIFUL!');
-            contextParts.push('\nThis is the user\'s FIRST experience. Make it impressive:');
-            contextParts.push('1. **USE TAILWIND PROPERLY** - Use standard Tailwind color classes');
-            contextParts.push('2. **NO PLACEHOLDERS** - Use real content, not lorem ipsum');
-            contextParts.push('3. **COMPLETE COMPONENTS** - Header, Hero, Features, Footer minimum');
-            contextParts.push('4. **VISUAL POLISH** - Shadows, hover states, transitions');
-            contextParts.push('5. **STANDARD CLASSES** - bg-white, text-gray-900, bg-blue-500, NOT bg-background');
-            contextParts.push('\nCreate a polished, professional application that works perfectly on first load.');
+            contextParts.push('\n🚨 USER BRIEF IS AUTHORITATIVE - FIRST GENERATION CONTRACT');
+            contextParts.push('Treat the user request as the source of truth. Do not add sections, features, packages, metrics, testimonials, logos, or named people that the user did not request.');
+            contextParts.push('Choose the smallest complete artifact that satisfies the brief. Only introduce a header, hero, feature grid, footer, or other page pattern when the brief asks for it or it is structurally necessary.');
+            contextParts.push('Use honest real content from the brief, or clearly labelled placeholders when facts are unknown. Keep every file complete and runnable.');
             contextParts.push('\n⚠️ OUTPUT FORMAT:');
             contextParts.push('Use <file path="...">content</file> tags for EVERY file');
             contextParts.push('NEVER output "Generated Files:" as plain text');

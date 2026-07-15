@@ -66,6 +66,11 @@ test('generation quality calls inherit the configured QA and repair timeouts', (
   assert.match(route, /timeoutMs:\s*repairRoute\.timeoutMs/);
 });
 
+test('first-generation mode does not force a generic page template over the user brief', () => {
+  assert.match(route, /USER BRIEF IS AUTHORITATIVE/);
+  assert.doesNotMatch(route, /Header, Hero, Features, Footer minimum/);
+});
+
 test('generation and edit intent routes resolve only configured OmniRoute models', () => {
   assert.match(route, /resolveTeamModelRoute/);
   assert.match(route, /getLanguageModel/);
