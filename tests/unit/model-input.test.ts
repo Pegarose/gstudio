@@ -87,3 +87,15 @@ test("removes absolute currentFiles map keys and values while preserving relativ
   assert.doesNotMatch(serialized, /\/\/server\/share\/private-project\/Share\.tsx/);
   assert.doesNotMatch(serialized, /\/Users\/reviewer\/private-project\/config\.json/);
 });
+
+test("preserves slash-separated prose in generation prompts", () => {
+  const sanitized = sanitizeGenerationModelInput({
+    prompt: "Use the DESIGN PREFERENCE / STYLE: Minimalist direction.",
+    context: {},
+  });
+
+  assert.equal(
+    sanitized.prompt,
+    "Use the DESIGN PREFERENCE / STYLE: Minimalist direction.",
+  );
+});

@@ -8,7 +8,7 @@ type JsonValue =
 
 const REDACTED = "[redacted]";
 const secretKeyPattern = /api[_-]?key|secret|password|passwd|token|jwt|credential|authorization|cookie|private[_-]?key|database[_-]?url|connection[_-]?string/i;
-const absoluteFilesystemPathPattern = /(?:^|[\s"'`=(])(?:[a-z]:[\\/]|[\\/]|~[\\/])/i;
+const absoluteFilesystemPathPattern = /(?:^|[\s"'`=(])(?:[a-z]:[\\/]|[\\/](?!\s)|~[\\/])(?=[^\s"'`])/i;
 const relativeFilesystemPathPattern = /^\.\.?[\\/]/;
 const secretValuePattern = /(?:\b(?:sk|rk|pk)-[a-z0-9_-]{8,}|\bgh[pous]_[a-z0-9_-]{8,}|\bgithub_pat_[a-z0-9_-]{8,}|\bAKIA[A-Z0-9]{16}\b|\bBearer\s+\S+|[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@)/i;
 
