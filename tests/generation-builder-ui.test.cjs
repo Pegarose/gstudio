@@ -6,6 +6,7 @@ const test = require('node:test');
 const builderPage = resolve(__dirname, '../app/generation/page.tsx');
 const dashboard = readFileSync(resolve(__dirname, '../app/page.tsx'), 'utf8');
 const source = readFileSync(builderPage, 'utf8');
+const builderStyles = readFileSync(resolve(__dirname, '../app/generation/builder.module.css'), 'utf8');
 
 test('dashboard and builder normalize role-specific TR4 model selections', () => {
   assert.match(dashboard, /normalizeTeamModel\("planning"/);
@@ -228,4 +229,27 @@ test('builder buffers fragmented apply SSE frames until the terminal complete ev
   assert.match(applyFlow, /sseFrames\.append\(decoder\.decode\(\)\)/);
   assert.match(applyFlow, /let didReachApplyTerminal = false/);
   assert.match(applyFlow, /didReachApplyTerminal = true/);
+});
+
+test('builder exposes workbench file tabs and active editor', () => {
+  assert.match(source, /data-testid="workbench-file-tabs"/);
+  assert.match(source, /data-testid="workbench-file-tab/);
+  assert.match(source, /data-testid="workbench-active-file"/);
+  assert.match(source, /selectedFile/);
+});
+
+test('builder exposes terminal and brand drawer truthfully', () => {
+  assert.match(source, /data-testid="workbench-drawer"/);
+  assert.match(source, /Terminal/);
+  assert.match(source, /Brand/);
+  assert.match(source, /Candidate ready · awaiting validation/);
+  assert.match(source, /Validated and live/);
+  assert.match(source, /aria-expanded/);
+  assert.match(source, /Escape/);
+});
+
+test('builder drawer has desktop and reduced-motion styles', () => {
+  assert.match(builderStyles, /workbenchDrawer/);
+  assert.match(builderStyles, /max-height:\s*52vh/);
+  assert.match(builderStyles, /prefers-reduced-motion/);
 });

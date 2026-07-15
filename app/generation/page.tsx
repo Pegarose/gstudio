@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import Image from 'next/image';
@@ -124,6 +124,8 @@ interface ScrapeData {
   error?: string;
 }
 
+type WorkbenchDrawerTab = 'terminal' | 'brand';
+
 type BuilderFailure = {
   message?: unknown;
   errorClass?: string;
@@ -179,6 +181,8 @@ function AISandboxPage() {
   const [homeUrlInput, setHomeUrlInput] = useState('');
   const [homeContextInput, setHomeContextInput] = useState('');
   const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('preview');
+  const [workbenchDrawerOpen, setWorkbenchDrawerOpen] = useState(false);
+  const [workbenchDrawerTab, setWorkbenchDrawerTab] = useState<WorkbenchDrawerTab>('terminal');
   
   // Premium Workspace Controls State
   const [generationMode, setGenerationMode] = useState<'build' | 'plan'>('build');
@@ -605,6 +609,24 @@ function AISandboxPage() {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
     }
   }, [chatMessages]);
+
+  useEffect(() => {
+    const hasTerminalError = responseArea.some(line => line.startsWith('[error]'));
+    const applyIsActive = Boolean(codeApplicationState.stage && codeApplicationState.stage !== 'complete');
+    if (generationProgress.isGenerating || applyIsActive || hasTerminalError) {
+      setWorkbenchDrawerOpen(true);
+      setWorkbenchDrawerTab('terminal');
+    }
+  }, [generationProgress.isGenerating, codeApplicationState.stage, responseArea]);
+
+  useEffect(() => {
+    if (!workbenchDrawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWorkbenchDrawerOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [workbenchDrawerOpen]);
 
   const updateStatus = (text: string, active: boolean) => {
     setStatus({ text, active });
@@ -1686,6 +1708,51 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     />
   );
 
+  const availableWorkbenchFiles = useMemo(() => {
+    const files = [...generationProgress.files];
+    const currentFile = generationProgress.currentFile;
+    if (currentFile && !files.some(file => file.path === currentFile.path)) {
+      files.push({ ...currentFile, completed: false });
+    }
+    return files.filter((file, index, all) => all.findIndex(candidate => candidate.path === file.path) === index);
+  }, [generationProgress.files, generationProgress.currentFile]);
+
+  const activeWorkbenchFile = availableWorkbenchFiles.find(file => file.path === selectedFile)
+    || availableWorkbenchFiles[0]
+    || null;
+
+  const workbenchPhase = codeApplicationState.stage === 'complete'
+    ? 'validated'
+    : codeApplicationState.stage
+      ? 'applying'
+      : generationProgress.isGenerating
+        ? 'generating'
+        : availableWorkbenchFiles.length > 0
+          ? 'candidate'
+          : 'idle';
+
+  const workbenchStatusLabel = workbenchPhase === 'validated'
+    ? 'Validated and live'
+    : workbenchPhase === 'candidate'
+      ? 'Candidate ready · awaiting validation'
+      : workbenchPhase === 'applying'
+        ? 'Applying and validating'
+        : workbenchPhase === 'generating'
+          ? 'Generating candidate'
+          : 'Ready';
+
+  const brandContext = conversationContext.scrapedWebsites.find(site => site.content?.brandGuidelines || site.content?.guidelines);
+  const brandGuidelines = brandContext?.content?.brandGuidelines || brandContext?.content?.guidelines;
+  const hasBrandContext = Boolean(brandGuidelines);
+
+  const languageForFile = (path: string) => {
+    const extension = path.split('.').pop()?.toLowerCase();
+    if (extension === 'css') return 'css';
+    if (extension === 'json') return 'json';
+    if (extension === 'html') return 'html';
+    return 'jsx';
+  };
+
   const renderMainContent = () => {
 
     if (
@@ -1854,217 +1921,85 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             
             {/* Live Code Display */}
             <div className="flex-1 rounded-lg p-6 flex flex-col min-h-0 overflow-hidden">
+              {availableWorkbenchFiles.length > 0 && (
+                <div className={styles.workbenchFileTabs} data-testid="workbench-file-tabs" role="tablist" aria-label="Generated files">
+                  {availableWorkbenchFiles.map(file => (
+                    <button
+                      key={file.path}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeWorkbenchFile?.path === file.path}
+                      data-testid={`workbench-file-tab-${file.path.replaceAll('/', '-')}`}
+                      className={`${styles.workbenchFileTab} ${activeWorkbenchFile?.path === file.path ? styles.workbenchFileTabActive : ''}`}
+                      onClick={() => setSelectedFile(file.path)}
+                      title={file.path}
+                    >
+                      <span aria-hidden="true">{getFileIcon(file.path)}</span>
+                      <span className={styles.workbenchFileTabLabel}>{file.path.split('/').pop()}</span>
+                      <span className={file.edited ? styles.workbenchFileTabEdited : styles.workbenchFileTabState} aria-label={file.edited ? 'Edited file' : 'Generated file'}>
+                        {file.edited ? '●' : '·'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="flex-1 overflow-y-auto min-h-0 scrollbar-hide" ref={codeDisplayRef}>
-                {/* Show selected file if one is selected */}
-                {selectedFile ? (
-                  <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                    <div className="bg-black border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                      <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {getFileIcon(selectedFile)}
-                          <span className="font-mono text-sm">{selectedFile}</span>
-                        </div>
-                        <button
-                          onClick={() => setSelectedFile(null)}
-                          className="hover:bg-black/20 p-1 rounded transition-colors"
-                        >
-                          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+                {activeWorkbenchFile ? (
+                  <div className={styles.workbenchEditor} data-testid="workbench-active-file">
+                    <div className={styles.workbenchEditorHeader}>
+                      <div className={styles.workbenchEditorPath}>
+                        {getFileIcon(activeWorkbenchFile.path)}
+                        <span>{activeWorkbenchFile.path}</span>
                       </div>
-                      <div className="bg-gray-900 border border-gray-700 rounded">
-                        <SyntaxHighlighter
-                          language={(() => {
-                            const ext = selectedFile.split('.').pop()?.toLowerCase();
-                            if (ext === 'css') return 'css';
-                            if (ext === 'json') return 'json';
-                            if (ext === 'html') return 'html';
-                            return 'jsx';
-                          })()}
-                          style={vscDarkPlus}
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            background: 'transparent',
-                          }}
-                          showLineNumbers={true}
-                        >
-                          {(() => {
-                            // Find the file content from generated files
-                            const file = generationProgress.files.find(f => f.path === selectedFile);
-                            return file?.content || '// File content will appear here';
-                          })()}
-                        </SyntaxHighlighter>
-                      </div>
+                      <span className={activeWorkbenchFile.edited ? styles.workbenchEditedBadge : styles.workbenchGeneratedBadge}>
+                        {activeWorkbenchFile.edited ? 'Edited' : activeWorkbenchFile.completed ? 'Generated' : 'Streaming'}
+                      </span>
+                    </div>
+                    <div className={styles.workbenchEditorBody}>
+                      <SyntaxHighlighter
+                        language={languageForFile(activeWorkbenchFile.path)}
+                        style={vscDarkPlus}
+                        customStyle={{ margin: 0, padding: '1rem', background: 'transparent', fontSize: '0.75rem', lineHeight: 1.6 }}
+                        showLineNumbers
+                        wrapLongLines
+                      >
+                        {activeWorkbenchFile.content || 'Waiting for file content…'}
+                      </SyntaxHighlighter>
                     </div>
                   </div>
-                ) : /* If no files parsed yet, show loading or raw stream */
-                generationProgress.files.length === 0 && !generationProgress.currentFile ? (
-                  generationProgress.isThinking ? (
-                    // Beautiful loading state while thinking
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center">
-                        <div className="mb-8 relative">
-                          <div className="w-48 h-48 mx-auto">
-                            <div className="absolute inset-0 border-8 border-gray-800 rounded-full"></div>
-                            <div className="absolute inset-0 border-8 border-green-500 rounded-full animate-spin border-t-transparent"></div>
-                          </div>
-                        </div>
-                        <h3 className="text-xl font-medium text-white mb-2">AI is analyzing your request</h3>
-                        <p className="text-gray-400 text-sm">{generationProgress.status || 'Preparing to generate code...'}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-black border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="px-4 py-2 bg-gray-100 text-gray-900 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-16 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
-                          <span className="font-mono text-sm">Streaming code...</span>
+                ) : generationProgress.isThinking ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <div className="mb-8 relative">
+                        <div className="w-48 h-48 mx-auto">
+                          <div className="absolute inset-0 border-8 border-gray-800 rounded-full" />
+                          <div className="absolute inset-0 border-8 border-green-500 rounded-full animate-spin border-t-transparent" />
                         </div>
                       </div>
-                      <div className="p-4 bg-gray-900 rounded">
-                        <SyntaxHighlighter
-                          language="jsx"
-                          style={vscDarkPlus}
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            background: 'transparent',
-                          }}
-                          showLineNumbers={true}
-                        >
-                          {generationProgress.streamedCode || 'Starting code generation...'}
-                        </SyntaxHighlighter>
-                        <span className="inline-block w-3 h-5 bg-orange-400 ml-1 animate-pulse" />
-                      </div>
+                      <h3 className="text-xl font-medium text-white mb-2">AI is analyzing your request</h3>
+                      <p className="text-gray-400 text-sm">{generationProgress.status || 'Preparing to generate code...'}</p>
                     </div>
-                  )
+                  </div>
                 ) : (
-                  <div className="space-y-4">
-                    {/* Show current file being generated */}
-                    {generationProgress.currentFile && (
-                      <div className="bg-black border-2 border-gray-400 rounded-lg overflow-hidden shadow-sm">
-                        <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 h-16 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span className="font-mono text-sm">{generationProgress.currentFile.path}</span>
-                            <span className={`px-2 py-0.5 text-xs rounded ${
-                              generationProgress.currentFile.type === 'css' ? 'bg-blue-600 text-white' :
-                              generationProgress.currentFile.type === 'javascript' ? 'bg-yellow-600 text-white' :
-                              generationProgress.currentFile.type === 'json' ? 'bg-green-600 text-white' :
-                              'bg-gray-200 text-gray-700'
-                            }`}>
-                              {generationProgress.currentFile.type === 'javascript' ? 'JSX' : generationProgress.currentFile.type.toUpperCase()}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="bg-gray-900 border border-gray-700 rounded">
-                          <SyntaxHighlighter
-                            language={
-                              generationProgress.currentFile.type === 'css' ? 'css' :
-                              generationProgress.currentFile.type === 'json' ? 'json' :
-                              generationProgress.currentFile.type === 'html' ? 'html' :
-                              'jsx'
-                            }
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
-                            }}
-                            showLineNumbers={true}
-                          >
-                            {generationProgress.currentFile.content}
-                          </SyntaxHighlighter>
-                          <span className="inline-block w-3 h-4 bg-orange-400 ml-4 mb-4 animate-pulse" />
-                        </div>
+                  <div className="bg-black border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                        <span className="font-mono text-sm">{generationProgress.currentFile?.path || 'Streaming code...'}</span>
                       </div>
-                    )}
-                    
-                    {/* Show completed files */}
-                    {generationProgress.files.map((file, idx) => (
-                      <div key={idx} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                        <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-green-500">✓</span>
-                            <span className="font-mono text-sm">{file.path}</span>
-                          </div>
-                          <span className={`px-2 py-0.5 text-xs rounded ${
-                            file.type === 'css' ? 'bg-blue-600 text-white' :
-                            file.type === 'javascript' ? 'bg-yellow-600 text-white' :
-                            file.type === 'json' ? 'bg-green-600 text-white' :
-                            'bg-gray-200 text-gray-700'
-                          }`}>
-                            {file.type === 'javascript' ? 'JSX' : file.type.toUpperCase()}
-                          </span>
-                        </div>
-                        <div className="bg-gray-900 border border-gray-700  max-h-48 overflow-y-auto scrollbar-hide">
-                          <SyntaxHighlighter
-                            language={
-                              file.type === 'css' ? 'css' :
-                              file.type === 'json' ? 'json' :
-                              file.type === 'html' ? 'html' :
-                              'jsx'
-                            }
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
-                            }}
-                            showLineNumbers={true}
-                            wrapLongLines={true}
-                          >
-                            {file.content}
-                          </SyntaxHighlighter>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    {/* Show remaining raw stream if there's content after the last file */}
-                    {!generationProgress.currentFile && generationProgress.streamedCode.length > 0 && (
-                      <div className="bg-black border border-gray-200 rounded-lg overflow-hidden">
-                        <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 h-16 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                            <span className="font-mono text-sm">Processing...</span>
-                          </div>
-                        </div>
-                        <div className="bg-gray-900 border border-gray-700 rounded">
-                          <SyntaxHighlighter
-                            language="jsx"
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
-                            }}
-                            showLineNumbers={false}
-                          >
-                            {(() => {
-                              // Show only the tail of the stream after the last file
-                              const lastFileEnd = generationProgress.files.length > 0 
-                                ? generationProgress.streamedCode.lastIndexOf('</file>') + 7
-                                : 0;
-                              let remainingContent = generationProgress.streamedCode.slice(lastFileEnd).trim();
-                              
-                              // Remove explanation tags and content
-                              remainingContent = remainingContent.replace(/<explanation>[\s\S]*?<\/explanation>/g, '').trim();
-
-                              // If only whitespace or nothing left, show loading message
-                              // Use "Loading sandbox..." instead of "Waiting for next file..." for better UX
-                              return remainingContent || 'Loading sandbox...';
-                            })()}
-                          </SyntaxHighlighter>
-                        </div>
-                      </div>
-                    )}
+                    </div>
+                    <div className="bg-gray-900">
+                      <SyntaxHighlighter
+                        language={languageForFile(generationProgress.currentFile?.path || 'stream.jsx')}
+                        style={vscDarkPlus}
+                        customStyle={{ margin: 0, padding: '1rem', fontSize: '0.75rem', background: 'transparent' }}
+                        showLineNumbers
+                        wrapLongLines
+                      >
+                        {generationProgress.currentFile?.content || generationProgress.streamedCode || 'Starting code generation...'}
+                      </SyntaxHighlighter>
+                    </div>
                   </div>
                 )}
               </div>
@@ -5028,6 +4963,20 @@ Focus on the key sections and content, making it clean and modern.`;
                   Sandbox active
                 </div>
               )}
+
+              <button
+                type="button"
+                className={styles.workbenchDrawerTrigger}
+                aria-expanded={workbenchDrawerOpen}
+                aria-controls="workbench-drawer"
+                onClick={() => {
+                  setWorkbenchDrawerOpen(open => !open);
+                  setWorkbenchDrawerTab('terminal');
+                }}
+              >
+                <span aria-hidden="true">›_</span>
+                <span>Terminal</span>
+              </button>
               
               {/* Open in new tab button */}
               {hasProjectPreview && sandboxData && (
@@ -5049,6 +4998,111 @@ Focus on the key sections and content, making it clean and modern.`;
             {renderMainContent()}
           </div>
         </div>
+        {workbenchDrawerOpen && (
+          <aside
+            id="workbench-drawer"
+            data-testid="workbench-drawer"
+            className={styles.workbenchDrawer}
+            aria-label="Builder workspace details"
+          >
+            <div className={styles.workbenchDrawerHeader}>
+              <div>
+                <span className={styles.workbenchDrawerEyebrow}>Workspace details</span>
+                <strong>{workbenchStatusLabel}</strong>
+              </div>
+              <button
+                type="button"
+                className={styles.workbenchDrawerClose}
+                onClick={() => setWorkbenchDrawerOpen(false)}
+                aria-label="Close workspace details"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className={styles.workbenchDrawerTabs} role="tablist" aria-label="Workspace detail tabs">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workbenchDrawerTab === 'terminal'}
+                onClick={() => setWorkbenchDrawerTab('terminal')}
+              >
+                Terminal
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workbenchDrawerTab === 'brand'}
+                onClick={() => setWorkbenchDrawerTab('brand')}
+              >
+                Brand
+              </button>
+            </div>
+
+            {workbenchDrawerTab === 'terminal' ? (
+              <div className={styles.workbenchDrawerBody}>
+                <div className={styles.workbenchStatusBanner} data-phase={workbenchPhase}>
+                  {workbenchStatusLabel}
+                </div>
+                <div className={styles.workbenchTerminalLog} aria-label="Terminal output">
+                  {responseArea.length > 0 ? responseArea.map((line, index) => (
+                    <code key={`${line}-${index}`}>{line}</code>
+                  )) : (
+                    <span>No terminal output yet.</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className={styles.workbenchDrawerBody}>
+                {hasBrandContext ? (
+                  <div className={styles.workbenchBrandSummary}>
+                    <div className={styles.workbenchBrandNotice}>
+                      Visual language only. The generated project remains an original build.
+                    </div>
+                    {brandContext?.url && (
+                      <a href={brandContext.url} target="_blank" rel="noreferrer" className={styles.workbenchBrandSource}>
+                        {brandContext.url}
+                      </a>
+                    )}
+                    {brandGuidelines?.styleName && <strong>{brandGuidelines.styleName}</strong>}
+                    {brandGuidelines?.colors && (
+                      <div className={styles.workbenchBrandSection}>
+                        <span className={styles.workbenchBrandLabel}>Palette</span>
+                        <div className={styles.workbenchBrandPalette}>
+                          {Object.entries(brandGuidelines.colors)
+                            .filter(([, value]) => typeof value === 'string')
+                            .slice(0, 6)
+                            .map(([name, value]) => (
+                              <div key={name} className={styles.workbenchBrandSwatch}>
+                                <span style={{ backgroundColor: value as string }} aria-hidden="true" />
+                                <small>{name}</small>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    {brandGuidelines?.typography?.fontFamilies && (
+                      <div className={styles.workbenchBrandSection}>
+                        <span className={styles.workbenchBrandLabel}>Typography</span>
+                        <p>{Object.values(brandGuidelines.typography.fontFamilies).filter(Boolean).join(' · ')}</p>
+                      </div>
+                    )}
+                    {brandGuidelines?.spacing && (
+                      <div className={styles.workbenchBrandSection}>
+                        <span className={styles.workbenchBrandLabel}>Spacing</span>
+                        <p>{brandGuidelines.spacing.baseUnit ? `${brandGuidelines.spacing.baseUnit}px base unit` : 'Captured spacing guidance'}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className={styles.workbenchDrawerEmpty}>
+                    Brand guidance appears here after a visual reference is analyzed.
+                  </p>
+                )}
+              </div>
+            )}
+          </aside>
+        )}
       {showTeamModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-16 animate-fade-in">
           <div className="bg-white rounded-16 shadow-2xl w-full max-w-[500px] border border-gray-150 overflow-hidden flex flex-col max-h-[90vh] animate-scale-up">
