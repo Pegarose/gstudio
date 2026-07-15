@@ -523,6 +523,7 @@ function AISandboxPage() {
   // Start capturing screenshot if URL is provided on mount (from home screen)
   useEffect(() => {
     if (!showHomeScreen && homeUrlInput && !urlScreenshot && !isCapturingScreenshot) {
+      if (homeUrlInput.trim().toLowerCase().startsWith('scratch://')) return;
       let screenshotUrl = homeUrlInput.trim();
       if (!screenshotUrl.match(/^https?:\/\//i)) {
         screenshotUrl = 'https://' + screenshotUrl;
@@ -3136,6 +3137,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
 //   };
 
   const captureUrlScreenshot = async (url: string) => {
+    const normalizedUrl = url.trim().toLowerCase();
+    if (normalizedUrl.startsWith('scratch://') || normalizedUrl.startsWith('https://scratch://')) {
+      setUrlScreenshot(null);
+      setScreenshotError(null);
+      return;
+    }
+
     setIsCapturingScreenshot(true);
     setScreenshotError(null);
     try {
@@ -3191,8 +3199,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     
     // Clear messages and immediately show the initial message
     setChatMessages([]);
+    const isScratchInput = homeUrlInput.trim().toLowerCase().startsWith('scratch://');
     let displayUrl = homeUrlInput.trim();
-    if (!displayUrl.match(/^https?:\/\//i)) {
+    if (!isScratchInput && !displayUrl.match(/^https?:\/\//i)) {
       displayUrl = 'https://' + displayUrl;
     }
     // Remove protocol for cleaner display
@@ -3224,9 +3233,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     // Also ensure we're on preview tab to show the loading overlay
     setActiveTab('preview');
     
-    // Always capture screenshot for new URLs, even if sandbox exists
-    // This ensures the loading screen shows properly
-    captureUrlScreenshot(displayUrl);
+    // Capture reference imagery only for URL-based modes. Scratch projects must
+    // never enter the scraper path or make a synthetic https://scratch request.
+    if (!isScratchInput && generationIntent !== 'scratch') {
+      captureUrlScreenshot(displayUrl);
+    }
     
     setTimeout(async () => {
       setShowHomeScreen(false);
@@ -3252,7 +3263,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       try {
         // Scrape the website
         let url = homeUrlInput.trim();
-        if (!url.match(/^https?:\/\//i)) {
+        if (!url.toLowerCase().startsWith('scratch://') && !url.match(/^https?:\/\//i)) {
           url = 'https://' + url;
         }
 
@@ -3294,7 +3305,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           });
           addChatMessage(`Building your custom component using these brand guidelines...`, 'system');
 
-        } else if (url.startsWith('scratch://')) {
+        } else if (isFromScratch || url.toLowerCase().startsWith('scratch://')) {
           // === BUILD FROM SCRATCH MODE ===
           scrapeData = {
             success: true,
@@ -3937,7 +3948,7 @@ Focus on the key sections and content, making it clean and modern.`;
 
   return (
     <HeaderProvider>
-      <div data-testid="generation-workspace" className={`${styles.workspace} font-sans dark:bg-neutral-950 text-foreground h-screen flex flex-col`}>
+      <div data-testid="generation-workspace" className={`${styles.workspace} dark font-sans dark:bg-neutral-950 text-neutral-100 h-screen flex flex-col`}>
       <div className={`${styles.topbar} backdrop-blur-md px-16 py-10 border-b flex items-center justify-between shadow-sm z-30`}>
         <div className="flex items-center gap-12">
           <button 

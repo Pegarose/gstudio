@@ -63,6 +63,21 @@ test('builder workspace owns its typography instead of inheriting a serif fallba
   assert.match(source, /\.composerSubmit/);
 });
 
+test('builder uses the Bolt-inspired 405px chat rail and default dark workspace', () => {
+  const styles = readFileSync(resolve(__dirname, '../app/generation/builder.module.css'), 'utf8');
+
+  assert.match(source, /styles\.workspace\} dark font-sans/);
+  assert.match(styles, /\.chatShell\s*\{[\s\S]*?width:\s*405px;[\s\S]*?min-width:\s*405px;/);
+  assert.match(styles, /color-scheme:\s*dark/);
+});
+
+test('scratch generation bypasses screenshot and website scraping', () => {
+  assert.match(source, /startsWith\('scratch:\/\/'\)/);
+  assert.match(source, /if \(homeUrlInput\.trim\(\)\.toLowerCase\(\)\.startsWith\('scratch:\/\/'\)\) return/);
+  assert.match(source, /if \(!isScratchInput && generationIntent !== 'scratch'\) \{\s*captureUrlScreenshot/);
+  assert.match(source, /isFromScratch \|\| url\.toLowerCase\(\)\.startsWith\('scratch:\/\/'\)/);
+});
+
 test('builder creates a project before requesting an explicit-ID sandbox', () => {
   const source = readFileSync(builderPage, 'utf8');
 

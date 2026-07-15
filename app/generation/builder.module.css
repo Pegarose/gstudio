@@ -1,17 +1,17 @@
 /* Mobbin Lovable study · macrostructure: Workbench · tone: technical/austere */
 
 .workspace {
-  --builder-paper: hsl(var(--background));
-  --builder-panel: hsl(var(--card));
-  --builder-ink: hsl(var(--foreground));
-  --builder-muted: hsl(var(--muted));
-  --builder-muted-ink: hsl(var(--muted-foreground));
-  --builder-rule: hsl(var(--border));
-  --builder-accent: hsl(24 95% 53%);
-  --builder-accent-soft: hsl(24 95% 53% / 0.11);
-  --builder-focus: hsl(24 95% 42%);
-  --builder-radius-panel: 0.875rem;
-  --builder-radius-control: 0.625rem;
+  --builder-paper: hsl(240 6% 7%);
+  --builder-panel: hsl(240 5% 9%);
+  --builder-ink: hsl(0 0% 96%);
+  --builder-muted: hsl(240 4% 15%);
+  --builder-muted-ink: hsl(240 5% 66%);
+  --builder-rule: hsl(240 4% 21%);
+  --builder-accent: hsl(201 94% 55%);
+  --builder-accent-soft: hsl(201 94% 55% / 0.14);
+  --builder-focus: hsl(201 94% 62%);
+  --builder-radius-panel: 0.75rem;
+  --builder-radius-control: 0.5rem;
   --builder-space-1: 0.25rem;
   --builder-space-2: 0.5rem;
   --builder-space-3: 0.75rem;
@@ -19,6 +19,7 @@
   background: var(--builder-paper);
   color: var(--builder-ink);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
   overflow-x: clip;
 }
 
@@ -91,8 +92,9 @@
 }
 
 .chatShell {
-  width: 22.5rem;
-  min-width: 22.5rem;
+  width: 405px;
+  min-width: 405px;
+  flex: 0 0 405px;
 }
 
 .conversation {
@@ -244,13 +246,13 @@
 .commandMessage { color: hsl(0 0% 90%); background: hsl(0 0% 9%); font-family: var(--font-geist-mono), monospace; }
 
 .composerDock {
-  padding: 0.5rem 0.625rem 0.625rem;
+  padding: 0.75rem 0.875rem 0.875rem;
   border-top: 1px solid color-mix(in srgb, var(--builder-rule) 78%, transparent);
   background: var(--builder-panel);
 }
 
 .composer {
-  padding: 0.625rem !important;
+  padding: 0.875rem !important;
   border-color: color-mix(in srgb, var(--builder-rule) 92%, transparent);
   border-radius: var(--builder-radius-panel);
   background: var(--builder-panel);
@@ -389,9 +391,17 @@
   .topbar { padding-inline: 0.75rem; }
   .agentButton span { display: none; }
   .workspaceBody { flex-direction: column; overflow-y: auto; }
-  .chatShell { width: 100%; min-width: 0; min-height: 28rem; }
+  .chatShell { width: 100%; min-width: 0; flex-basis: auto; min-height: 28rem; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--builder-rule); }
   .previewPanel { flex: none; min-height: 28rem; }
   .conversation { padding: 1rem !important; }
   .previewLink { display: none; }
+}
+
+@media (min-width: 769px) and (max-width: 1180px) {
+  .chatShell {
+    width: 360px;
+    min-width: 360px;
+    flex-basis: 360px;
+  }
 }
