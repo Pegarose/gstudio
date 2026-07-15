@@ -68,7 +68,17 @@ test('builder uses the Bolt-inspired 405px chat rail and default dark workspace'
 
   assert.match(source, /styles\.workspace\} dark font-sans/);
   assert.match(styles, /\.chatShell\s*\{[\s\S]*?width:\s*405px;[\s\S]*?min-width:\s*405px;/);
+  assert.doesNotMatch(styles, /max-width:\s*1180px[\s\S]*?width:\s*360px/);
   assert.match(styles, /color-scheme:\s*dark/);
+});
+
+test('direct builder entry does not create a sandbox before a project exists', () => {
+  const guardIndex = source.indexOf("if (!projectIdForSandbox)");
+  const createIndex = source.indexOf('await createSandbox(true, projectIdForSandbox);', guardIndex);
+  assert.ok(guardIndex >= 0);
+  assert.ok(createIndex > guardIndex);
+  assert.match(source.slice(guardIndex, createIndex), /No project context; waiting for first prompt/);
+  assert.match(source.slice(guardIndex, createIndex), /return;/);
 });
 
 test('scratch generation bypasses screenshot and website scraping', () => {
@@ -76,6 +86,12 @@ test('scratch generation bypasses screenshot and website scraping', () => {
   assert.match(source, /if \(homeUrlInput\.trim\(\)\.toLowerCase\(\)\.startsWith\('scratch:\/\/'\)\) return/);
   assert.match(source, /if \(!isScratchInput && generationIntent !== 'scratch'\) \{\s*captureUrlScreenshot/);
   assert.match(source, /isFromScratch \|\| url\.toLowerCase\(\)\.startsWith\('scratch:\/\/'\)/);
+});
+
+test('builder normalizes legacy clone sessions to the inspiration reference flow', () => {
+  assert.match(source, /storedGenerationIntent === 'clone'/);
+  assert.match(source, /generationIntent = 'inspire'/);
+  assert.match(source, /visual reference|original build/i);
 });
 
 test('builder creates a project before requesting an explicit-ID sandbox', () => {

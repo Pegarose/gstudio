@@ -43,10 +43,11 @@ export default function HomePage() {
   const [showDiscoverPanel, setShowDiscoverPanel] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   
-  // New Project Form States
-  const [modalTab, setModalTab] = useState<"clone" | "inspire" | "scratch">("clone");
+  // Unified project launcher: a brief is always required; a URL is optional
+  // visual direction and never opts the user into an exact clone workflow.
   const [projectName, setProjectName] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
+  const [referenceUrl, setReferenceUrl] = useState("");
+  const [useReference, setUseReference] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState("4"); // Minimalist default
   const [planningModel, setPlanningModel] = useState(() => normalizeTeamModel("planning", undefined));
   const [coderModel, setCoderModel] = useState(() => normalizeTeamModel("coder", undefined));
@@ -103,22 +104,19 @@ export default function HomePage() {
       return;
     }
 
-    const generationIntent = modalTab;
-    const finalUrl = modalTab === "scratch" ? "scratch://new-project" : targetUrl.trim();
-    
-    if (modalTab !== "scratch") {
-      if (!finalUrl || !validateUrl(finalUrl)) {
-        toast.error("Please enter a valid URL (e.g., https://example.com)");
-        return;
-      }
+    if (!additionalInstructions.trim()) {
+      toast.error("Please describe what you would like to build");
+      return;
     }
 
-    if (modalTab !== "clone") {
-      if (!additionalInstructions.trim()) {
-        toast.error("Please describe what you would like to build");
-        return;
-      }
+    const cleanReferenceUrl = referenceUrl.trim();
+    if (useReference && (!cleanReferenceUrl || !validateUrl(cleanReferenceUrl))) {
+      toast.error("Please enter a valid reference URL (e.g., https://example.com)");
+      return;
     }
+
+    const generationIntent = useReference ? "inspire" : "scratch";
+    const finalUrl = useReference ? cleanReferenceUrl : "scratch://new-project";
 
     sessionStorage.removeItem("projectId"); 
     sessionStorage.setItem("targetUrl", finalUrl);
@@ -133,7 +131,6 @@ export default function HomePage() {
     sessionStorage.setItem("autoStart", "true");
 
     const launchMessages = {
-      clone: "Preparing a faithful website recreation...",
       inspire: "Extracting visual direction for an original build...",
       scratch: "Initializing a blank project from scratch..."
     };
@@ -150,6 +147,10 @@ export default function HomePage() {
     sessionStorage.setItem("selectedCoderModel", project.coderModel);
     sessionStorage.setItem("selectedQaModel", project.qaModel);
     sessionStorage.setItem("projectName", project.name);
+    sessionStorage.setItem(
+      "generationIntent",
+      project.targetUrl?.toLowerCase().startsWith("scratch://") ? "scratch" : "inspire"
+    );
     sessionStorage.setItem("autoStart", "true");
     
     toast.success(`Resuming project: ${project.name}`);
@@ -447,7 +448,6 @@ export default function HomePage() {
                   type="button"
                   onClick={() => {
                     setIsModalOpen(true);
-                    setModalTab("clone");
                   }}
                   className="w-full flex items-center gap-10 px-12 py-8 rounded-lg text-xs font-bold text-neutral-500 hover:bg-neutral-200/30 dark:hover:bg-neutral-800/50 transition-all text-left"
                 >
@@ -991,41 +991,15 @@ export default function HomePage() {
 
             {/* Modal Form */}
             <form onSubmit={handleLaunchProject} className="p-20 space-y-16 flex-1 overflow-y-auto max-h-[500px]">
-              {/* Segmented Control for Mode selection */}
-              <div className="flex bg-neutral-100 dark:bg-neutral-955 p-4 rounded-lg border border-neutral-200/50 dark:border-neutral-800">
-                <button
-                  type="button"
-                  onClick={() => setModalTab("clone")}
-                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
-                    modalTab === "clone"
-                      ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm"
-                      : "text-neutral-500 hover:text-neutral-300"
-                  }`}
-                >
-                  Clone Website
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModalTab("inspire")}
-                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
-                    modalTab === "inspire"
-                      ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm"
-                      : "text-neutral-500 hover:text-neutral-300"
-                  }`}
-                >
-                  Use as Inspiration
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModalTab("scratch")}
-                  className={`flex-1 text-center py-6 text-xs font-bold rounded-md transition-all ${
-                    modalTab === "scratch"
-                      ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-sm"
-                      : "text-neutral-500 hover:text-neutral-300"
-                  }`}
-                >
-                  Build From Scratch
-                </button>
+              {/* One brief-first flow with an optional visual reference */}
+              <div className="rounded-xl border border-orange-200/70 dark:border-orange-900/50 bg-orange-50/70 dark:bg-orange-950/20 px-12 py-10">
+                <div className="flex items-start gap-8">
+                  <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-orange-500 text-[10px] font-black text-white">1</div>
+                  <div>
+                    <p className="text-xs font-bold text-neutral-900 dark:text-white">Describe what you want to build</p>
+                    <p className="mt-2 text-[10px] leading-relaxed text-neutral-600 dark:text-neutral-300">Start from a blank canvas, or add a URL below for visual language and layout inspiration. The generated product remains original.</p>
+                  </div>
+                </div>
               </div>
 
               {/* Project Name & Target URL */}
@@ -1037,36 +1011,42 @@ export default function HomePage() {
                     required
                     value={projectName}
                     onChange={e => setProjectName(e.target.value)}
-                    placeholder={modalTab === "scratch" ? "Acme Todo App" : "Acme UI Portal"}
+                    placeholder="Acme Workspace"
                     className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 text-neutral-800 dark:text-white"
                   />
                 </div>
-                {modalTab !== "scratch" ? (
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">
-                      {modalTab === "clone" ? "URL to Recreate" : "Reference URL"}
-                    </label>
+                <div className="space-y-4">
+                  <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">Optional visual reference</label>
+                  <input
+                    type="url"
+                    value={referenceUrl}
+                    onChange={e => {
+                      const next = e.target.value;
+                      setReferenceUrl(next);
+                      setUseReference(Boolean(next.trim()));
+                    }}
+                    placeholder="https://example.com"
+                    className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-orange-400 text-neutral-800 dark:text-white"
+                  />
+                  <label className="flex items-center gap-6 text-[10px] font-semibold text-neutral-600 dark:text-neutral-300">
                     <input
-                      type="text"
-                      required
-                      value={targetUrl}
-                      onChange={e => setTargetUrl(e.target.value)}
-                      placeholder="https://example.com"
-                      className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 text-neutral-800 dark:text-white"
+                      type="checkbox"
+                      checked={useReference}
+                      onChange={e => setUseReference(e.target.checked)}
+                      className="h-4 w-4 accent-orange-500"
                     />
-                  </div>
-                ) : (
-                  <div className="space-y-4 flex flex-col justify-end">
-                    <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">Blank Canvas Mode</label>
-                    <div className="bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-semibold text-neutral-500 italic">
-                      Bypassing scraper - creating a clean canvas
-                    </div>
-                  </div>
-                )}
+                    Use this URL for visual direction only
+                  </label>
+                </div>
               </div>
 
-              {/* TASK-SPECIFIC MODEL SELECTORS */}
-              <div className="bg-neutral-50 dark:bg-neutral-955 p-12 rounded-xl border border-neutral-200/50 dark:border-neutral-800 space-y-12">
+              {/* ADVANCED MODEL SETTINGS */}
+              <details className="group rounded-xl border border-neutral-200/70 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-955">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-12 py-10 text-[10px] font-bold uppercase tracking-wide text-neutral-600 dark:text-neutral-300">
+                  <span>Advanced model settings</span>
+                  <span className="text-[10px] text-neutral-400 transition-transform group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="border-t border-neutral-200/70 dark:border-neutral-800 p-12 space-y-12">
                 <div className="flex items-center gap-6 pb-6 border-b border-neutral-200 dark:border-neutral-900">
                   <svg className="w-3.5 h-3.5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -1126,7 +1106,8 @@ export default function HomePage() {
                     </select>
                   </div>
                 </div>
-              </div>
+                </div>
+              </details>
 
               {/* Design System Style Selector */}
               <div className="space-y-6">
@@ -1151,20 +1132,12 @@ export default function HomePage() {
 
               {/* Additional Instructions */}
               <div className="space-y-4">
-                <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">
-                  {modalTab === "clone" ? "Additional Specifications" : "What would you like to build? (Required)"}
-                </label>
+                <label className="text-[10px] font-bold tracking-wide uppercase text-neutral-500">What would you like to build? (Required)</label>
                 <textarea
-                  required={modalTab !== "clone"}
+                  required
                   value={additionalInstructions}
                   onChange={e => setAdditionalInstructions(e.target.value)}
-                  placeholder={
-                    modalTab === "clone"
-                      ? "Describe any deliberate changes to the recreated structure."
-                      : modalTab === "inspire"
-                        ? "Describe the original product to build using only the reference site's visual language."
-                        : "Describe your app, e.g. A crypto dashboard with 3 chart tabs, mock transactions history, and a modern layout."
-                  }
+                  placeholder="Describe the product, audience, key interactions, and visual tone you want to build."
                   className="w-full bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg px-10 py-8 text-xs font-medium placeholder:text-neutral-500 focus:outline-none focus:border-neutral-400 text-neutral-800 dark:text-white min-h-[80px] resize-none"
                 />
               </div>
@@ -1270,10 +1243,10 @@ export default function HomePage() {
                   key={i}
                   onClick={() => {
                     setProjectName(tpl.name);
-                    setTargetUrl(tpl.url);
+                    setReferenceUrl(tpl.url);
+                    setUseReference(true);
                     setSelectedStyle(tpl.style === "Minimalist" ? "4" : tpl.style === "Dark Mode" ? "5" : "6");
                     setIsModalOpen(true);
-                    setModalTab("clone");
                     setShowDiscoverPanel(false);
                     toast.success(`Loaded "${tpl.name}" template into creator!`);
                   }}

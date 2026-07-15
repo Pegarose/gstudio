@@ -15,13 +15,15 @@ test('canonical G Studio context loads from gstudio-agent-context', async () => 
   assert.doesNotMatch(loaded.skillPrompt, /SKILL: clone-fidelity/);
 });
 
-test('reference intent distinguishes inspiration from cloning', async () => {
+test('reference intent normalizes URL work to inspiration and keeps scratch explicit', async () => {
   const { resolveGenerationIntent } = await import('../lib/gstudio-agent-context.js');
 
   assert.equal(resolveGenerationIntent({ instructions: 'BusinessWire sitesinden ilham al' }), 'inspire');
   assert.equal(resolveGenerationIntent({ instructions: 'Use the visual language of https://businesswire.com' }), 'inspire');
-  assert.equal(resolveGenerationIntent({ instructions: 'Clone https://businesswire.com' }), 'clone');
+  assert.equal(resolveGenerationIntent({ instructions: 'Clone https://businesswire.com' }), 'inspire');
+  assert.equal(resolveGenerationIntent({ url: 'https://businesswire.com' }), 'inspire');
   assert.equal(resolveGenerationIntent({ explicitIntent: 'scratch' }), 'scratch');
+  assert.equal(resolveGenerationIntent({ url: 'scratch://new-project' }), 'scratch');
 });
 
 test('generic component wording in a full-page inspiration prompt does not activate component-scope', async () => {

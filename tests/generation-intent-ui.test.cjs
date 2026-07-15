@@ -12,10 +12,13 @@ const providerManager = readFileSync(resolve(__dirname, '../lib/ai/provider-mana
 const agentInstructions = readFileSync(resolve(__dirname, '../AGENTS.md'), 'utf8');
 const structuredPipelinePlan = readFileSync(resolve(__dirname, '../docs/superpowers/plans/2026-07-13-structured-generation-pipeline.md'), 'utf8');
 
-test('project launcher exposes clone, inspire, and scratch as distinct modes', () => {
-  assert.match(dashboard, /"clone" \| "inspire" \| "scratch"/);
-  assert.match(dashboard, /setModalTab\("inspire"\)/);
+test('project launcher exposes a unified optional-reference flow', () => {
+  assert.match(dashboard, /referenceUrl/);
+  assert.match(dashboard, /useReference/);
+  assert.doesNotMatch(dashboard, /"clone" \| "inspire" \| "scratch"/);
+  assert.doesNotMatch(dashboard, /Clone Website/);
   assert.match(dashboard, /sessionStorage\.setItem\("generationIntent", generationIntent\)/);
+  assert.match(dashboard, /generationIntent = .*inspire.*scratch/s);
 });
 
 test('builder routes inspiration without the unreachable legacy brand flag', () => {

@@ -398,6 +398,16 @@ function AISandboxPage() {
       
       if (!isMounted) return;
 
+      // A direct /generation visit has no project yet. Keep the builder in its
+      // empty state and wait for the first prompt to register a project before
+      // touching E2B; otherwise createSandbox would surface a misleading
+      // "project must be registered" error as a build failure.
+      if (!projectIdForSandbox) {
+        console.log('[home] No project context; waiting for first prompt');
+        updateStatus('Waiting for first prompt', false);
+        return;
+      }
+
       // Check if sandbox ID is in URL
       const sandboxIdParam = searchParams.get('sandbox');
       
@@ -3207,12 +3217,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     // Remove protocol for cleaner display
     const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
 
-    const storedIntent = sessionStorage.getItem('generationIntent') || undefined;
-    const generationIntent = resolveGenerationIntent({
-      explicitIntent: storedIntent,
+    const storedGenerationIntent = sessionStorage.getItem('generationIntent') || undefined;
+    let generationIntent = resolveGenerationIntent({
+      explicitIntent: storedGenerationIntent,
       instructions: homeContextInput,
       url: homeUrlInput
     });
+    if (storedGenerationIntent === 'clone') {
+      generationIntent = 'inspire';
+    }
     const isInspirationMode = generationIntent === 'inspire';
     sessionStorage.removeItem('generationIntent');
 
@@ -3220,7 +3233,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       generationIntent === 'scratch'
         ? 'Starting a new project from scratch...'
         : isInspirationMode
-          ? `Analyzing ${cleanUrl} for visual direction...`
+          ? `Analyzing ${cleanUrl} for visual direction, visual reference, and an original build...`
           : `Starting a faithful recreation of ${cleanUrl}...`,
       'system'
     );
