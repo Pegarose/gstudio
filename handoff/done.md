@@ -8,6 +8,17 @@
 
 This session completed the unified scratch/reference/inspiration smoke path over OmniRoute + E2B, including candidate quality validation and activation-gated apply. A transient OmniRoute empty-stream failure was isolated and made retryable. The next session can resume the planned builder editor/terminal UX redesign.
 
+## Builder Workbench Overlay Checkpoint — 16 July 2026
+
+The planned builder UX pass is now implemented in commit `65aa1a3` (`feat: add builder workbench overlay`). The existing 405px chat rail and generation/apply lifecycle remain intact.
+
+- Generated files now render as horizontally scrollable tabs with one active syntax-highlighted editor surface.
+- A Terminal trigger opens a non-resizing workspace drawer with live response lines and truthful `Generating candidate`, `Candidate ready · awaiting validation`, `Applying and validating`, and `Validated and live` states.
+- The drawer includes a Brand tab that stays empty until reference brand guidance exists; it does not add SEO/review/publish panels.
+- Escape closes the drawer, focus-visible states are present, and screens below 900px use a bottom-sheet layout.
+- The drawer is anchored below the topbar with `.workspaceBody { position: relative; }`.
+- Docker web service was rebuilt and manually checked at `http://localhost:9010/generation`; Terminal, Brand, and Escape flows were exercised. Screenshot: `output/playwright/builder-workbench-drawer-after-rebuild.png`.
+
 ## Accomplished
 
 - Merged the generation validation work into `main` earlier in the session history (`b6e94b0`) and rebuilt the Docker stack.
@@ -66,8 +77,8 @@ This session completed the unified scratch/reference/inspiration smoke path over
 
 ## Next Steps
 
-1. Implement the planned builder UX pass: real file tabs/diff, a real terminal/build-log pane, and a collapsible Brand Guidelines context drawer.
-2. Keep `candidate-ready` visibly distinct from validated apply success in any new builder surface.
+1. Continue visual polish only after reviewing the workbench against live Lovable/Bolt references; keep the current overlay scope.
+2. Keep `candidate-ready` visibly distinct from validated apply success in any future builder surface.
 3. Consider a separate stale-lease cleanup policy for historical `sandbox_leases`; do not delete persisted leases ad hoc.
 
 ## Blockers & Risks
