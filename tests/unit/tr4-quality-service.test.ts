@@ -46,10 +46,12 @@ test("reviewGeneratedCode normalizes a JSON-encoded findings array from an OpenA
     model,
     prompt: "Build a compact homepage",
     candidate: '<file path="src/App.jsx">export default function App() { return null; }</file>',
+    timeoutMs: 90_000,
   });
 
   assert.equal(validation.pass, true);
   assert.deepEqual(validation.findings, []);
+  assert.equal(model.doGenerateCalls[0].abortSignal instanceof AbortSignal, true);
 });
 
 test("buildRepairPrompt requests a complete corrected candidate for blocking findings", () => {
@@ -167,7 +169,7 @@ test("repairGeneratedCode turns a streamed partial artifact into a terminal qual
   });
 
   await assert.rejects(
-    () => repairGeneratedCode({ model, candidate, validation }),
+    () => repairGeneratedCode({ model, candidate, validation, timeoutMs: 180_000 }),
     (error: unknown) => {
       assert.equal(error instanceof GenerationQualityError, true);
       assert.equal(
@@ -181,6 +183,7 @@ test("repairGeneratedCode turns a streamed partial artifact into a terminal qual
   );
   assert.equal(model.doStreamCalls.length, 1);
   assert.equal(model.doStreamCalls[0].maxOutputTokens, 8192);
+  assert.equal(model.doStreamCalls[0].abortSignal instanceof AbortSignal, true);
 });
 
 test("repairGeneratedCode turns a streamed response without file tags into a terminal quality error", async () => {

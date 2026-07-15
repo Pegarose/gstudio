@@ -152,12 +152,14 @@ export async function reviewGeneratedCode({
   model,
   prompt,
   candidate,
-}: ReviewInput & { model: LanguageModel }): Promise<GenerationValidation> {
+  timeoutMs,
+}: ReviewInput & { model: LanguageModel; timeoutMs?: number }): Promise<GenerationValidation> {
   try {
     const result = await generateObject({
       model,
       schema: GenerationValidationSchema,
       messages: buildReviewMessages({ prompt, candidate }),
+      abortSignal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
     });
 
     return normalizeGenerationValidation(result.object);
@@ -180,12 +182,14 @@ export async function repairGeneratedCode({
   model,
   candidate,
   validation,
-}: RepairInput & { model: LanguageModel }): Promise<string> {
+  timeoutMs,
+}: RepairInput & { model: LanguageModel; timeoutMs?: number }): Promise<string> {
   const result = streamText({
     model,
     system: "You are G Studio's code repair agent. Return only complete repaired file artifacts.",
     prompt: buildRepairPrompt({ candidate, validation }),
     maxOutputTokens: 8192,
+    abortSignal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
 
   let repairedCandidate = "";

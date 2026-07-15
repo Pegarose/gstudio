@@ -21,6 +21,7 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 - Found the remaining live failure: a long candidate failed review and the repair response was incomplete. The cause was unbounded/legacy AI SDK v5 output-limit configuration.
 - Replaced legacy `maxTokens` with `maxOutputTokens` for initial generation, and gave repair streaming the same 8192-token ceiling (`500cca7`).
 - Added a schema-safe QA normalizer: OmniRoute review responses that encode `findings` as a JSON string are parsed and revalidated against the same Zod schema; markdown/non-JSON responses are still rejected.
+- Wired the configured QA/repair route timeouts through AI SDK v5 `abortSignal`, so long reviews and repairs cannot hold a generation indefinitely.
 - Cleaned up both disposable E2B sandboxes and both verification projects. No smoke project was left in the database.
 
 ## Key Decisions
@@ -42,12 +43,13 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 - `app/api/generate-ai-code-stream/route.ts` — uses AI SDK v5 `maxOutputTokens: 8192`.
 - `lib/generation/tr4-quality-service.ts` — repair generation has `maxOutputTokens: 8192`.
 - `lib/generation/tr4-quality-service.ts` — normalizes provider review JSON before final Zod validation.
+- `lib/generation/tr4-quality-service.ts` — accepts optional review/repair timeouts and forwards them as abort signals.
 - `tests/generation-intent-ui.test.cjs` — checks the v5 output-token option.
 - `tests/unit/tr4-quality-service.test.ts` — checks repair output capacity.
 
 ### Test Status
 
-- `npm run test:all` — passed after the QA normalizer change: 32 legacy + 60 unit + 58 integration.
+- `npm run test:all` — passed after the QA timeout change: 33 legacy + 60 unit + 58 integration.
 - `npx tsc --noEmit` — passed after the final repair-limit change.
 - Focused route and quality-service tests — passed after the final repair-limit change.
 - Docker rebuilt and `gstudio-web` is running at `http://localhost:9010` on the latest image.
@@ -61,9 +63,9 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 
 ## Next Steps
 
-1. Add an explicit QA timeout around the long `generateObject` review path so a slow reasoning review cannot hold a generation indefinitely.
+1. Re-run the compact smoke after the timeout-enabled Docker rebuild and confirm it now terminates within the configured QA/repair limits.
 2. Strengthen the generation prompt contract so an explicit two-file scratch request is not expanded into a generic multi-section landing page; preserve the quality gate’s fabricated-content and invisible-character blockers.
-3. Re-run the compact smoke and require `validation` + `candidate-ready`, then apply and require terminal `complete` only after live validation passes.
+3. Require `validation` + `candidate-ready`, then apply and require terminal `complete` only after live validation passes.
 4. Confirm the E2B preview renders the generated application rather than the sandbox-ready page, then kill the sandbox and delete the temporary project.
 5. Once reliability is proven, implement the planned builder UX pass: real file tabs/diff, a real terminal/build-log pane, and a collapsible Brand Guidelines context drawer. Keep `candidate-ready` visibly distinct from validated apply success.
 

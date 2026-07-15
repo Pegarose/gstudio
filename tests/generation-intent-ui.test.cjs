@@ -61,6 +61,11 @@ test('generation uses the AI SDK v5 output-token option', () => {
   assert.doesNotMatch(route, /maxTokens:\s*8192/);
 });
 
+test('generation quality calls inherit the configured QA and repair timeouts', () => {
+  assert.match(route, /timeoutMs:\s*qaRoute\.timeoutMs/);
+  assert.match(route, /timeoutMs:\s*repairRoute\.timeoutMs/);
+});
+
 test('generation and edit intent routes resolve only configured OmniRoute models', () => {
   assert.match(route, /resolveTeamModelRoute/);
   assert.match(route, /getLanguageModel/);

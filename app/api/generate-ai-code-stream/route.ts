@@ -1774,8 +1774,8 @@ Provide the complete file content without any truncation. Include all necessary 
                 : "Repair model is correcting blocking findings...",
             });
           },
-          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt: modelPrompt, candidate }),
-          repair: (candidate, validation) => repairGeneratedCode({ model: repairLanguageModel, candidate, validation }),
+          review: (candidate) => reviewGeneratedCode({ model: qaLanguageModel, prompt: modelPrompt, candidate, timeoutMs: qaRoute.timeoutMs }),
+          repair: (candidate, validation) => repairGeneratedCode({ model: repairLanguageModel, candidate, validation, timeoutMs: repairRoute.timeoutMs }),
         });
 
         generatedCode = qualityResult.candidate;
