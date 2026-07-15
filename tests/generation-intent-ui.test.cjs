@@ -69,6 +69,7 @@ test('generation quality calls inherit the configured QA and repair timeouts', (
 test('first-generation mode does not force a generic page template over the user brief', () => {
   assert.match(route, /USER BRIEF IS AUTHORITATIVE/);
   assert.match(route, /exact file count or exact file paths/);
+  assert.match(route, /EXPLICIT USER CONSTRAINT OVERRIDE/);
   assert.doesNotMatch(route, /Header, Hero, Features, Footer minimum/);
 });
 

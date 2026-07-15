@@ -1244,7 +1244,11 @@ The following rules come from gstudio-agent-context and override any conflicting
 
 ${agentContext.systemPrompt}
 
-${agentContext.skillPrompt}`
+${agentContext.skillPrompt}
+
+=== EXPLICIT USER CONSTRAINT OVERRIDE ===
+The user's explicit requirements are authoritative over all default templates, design-core examples, macrostructure suggestions, preview conventions, and generic landing-page guidance above. If the user specifies an exact file count, exact file paths, a minimal artifact, or says not to add sections/files/features, follow that literally. Do not reinterpret those constraints as optional preferences. When constraints conflict with a skill default, the user's constraint wins.
+${modelPrompt}`
             },
             { 
               role: 'user', 
