@@ -280,6 +280,14 @@ function collectBrowserFailures(
   browser: BrowserValidationReport,
   failures: ValidationStepError[],
 ): void {
+  if (browser.failureClass) {
+    addFailure(
+      failures,
+      browser.failureClass,
+      browser.failureEvidence ?? browser.runtime.evidence,
+    );
+    return;
+  }
   if (!browser.runtime.passed) addFailure(failures, "runtime", browser.runtime.evidence);
   if (!browser.responsive.every((item) => item.passed)) {
     addFailure(failures, "responsive", browser.responsive.filter((item) => !item.passed).map((item) => item.evidence).join("\n"));

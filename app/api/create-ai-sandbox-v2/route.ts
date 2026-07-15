@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSandboxService } from "@/lib/sandbox/service/sandbox-service";
+import { isTransientE2BProvisioningError } from "@/lib/sandbox/providers/e2b-provider";
 
 const CreateSandboxRequestSchema = z.object({
   projectId: z.string().min(1),
@@ -28,6 +29,15 @@ export async function POST(request: Request) {
     }
 
     console.error("[create-ai-sandbox-v2] Error:", error);
-    return NextResponse.json({ success: false, error: "Failed to create sandbox" }, { status: 500 });
+    const errorClass = isTransientE2BProvisioningError(error)
+      ? "sandbox-infrastructure"
+      : "provider-unavailable";
+    return NextResponse.json({
+      success: false,
+      error: errorClass === "sandbox-infrastructure"
+        ? "Sandbox infrastructure is temporarily unavailable. Retry the build."
+        : "The sandbox provider could not create this workspace.",
+      errorClass,
+    }, { status: 503 });
   }
 }

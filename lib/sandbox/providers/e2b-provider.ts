@@ -9,6 +9,14 @@ type ManagedCommandHandle = {
   kill(): Promise<unknown>;
 };
 
+const MAX_CREATE_ATTEMPTS = 2;
+const CREATE_RETRY_DELAY_MS = 50;
+
+export function isTransientE2BProvisioningError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|econnreset|etimedout|eai_again|temporarily unavailable|service unavailable|\b5\d\d\b/i.test(message);
+}
+
 export class E2BProvider extends SandboxProvider {
   private existingFiles: Set<string> = new Set();
   private viteCommand: ManagedCommandHandle | null = null;
@@ -37,50 +45,57 @@ export class E2BProvider extends SandboxProvider {
   }
 
   async createSandbox(): Promise<SandboxInfo> {
-    try {
-      
-      // Kill existing sandbox if any
-      if (this.sandbox) {
-        try {
-          await this.sandbox.kill();
-        } catch (e) {
-          console.error('Failed to close existing sandbox:', e);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= MAX_CREATE_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.createSandboxAttempt();
+      } catch (error) {
+        lastError = error;
+        await this.cleanupFailedCreate();
+        if (!isTransientE2BProvisioningError(error) || attempt === MAX_CREATE_ATTEMPTS) {
+          console.error('[E2BProvider] Error creating sandbox:', error);
+          throw error;
         }
-        this.sandbox = null;
+        await new Promise((resolve) => setTimeout(resolve, CREATE_RETRY_DELAY_MS * attempt));
       }
-      
-      // Clear existing files tracking
-      this.existingFiles.clear();
-
-      // Create base sandbox
-      this.sandbox = await Sandbox.create({ 
-        apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
-        timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs,
-        lifecycle: { onTimeout: 'pause', autoResume: true },
-      });
-      
-      const sandboxId = (this.sandbox as any).sandboxId || Date.now().toString();
-      const host = (this.sandbox as any).getHost(appConfig.e2b.vitePort);
-      
-
-      this.sandboxInfo = {
-        sandboxId,
-        url: `https://${host}`,
-        provider: 'e2b',
-        createdAt: new Date()
-      };
-
-      // Set extended timeout on the sandbox instance if method available
-      if (typeof this.sandbox.setTimeout === 'function') {
-        this.sandbox.setTimeout(appConfig.e2b.timeoutMs);
-      }
-
-      return this.sandboxInfo;
-
-    } catch (error) {
-      console.error('[E2BProvider] Error creating sandbox:', error);
-      throw error;
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private async createSandboxAttempt(): Promise<SandboxInfo> {
+    if (this.sandbox) await this.cleanupFailedCreate();
+    this.existingFiles.clear();
+    this.sandbox = await Sandbox.create({
+      apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
+      timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs,
+      lifecycle: { onTimeout: 'pause', autoResume: true },
+    });
+
+    const sandboxId = (this.sandbox as any).sandboxId || Date.now().toString();
+    const host = (this.sandbox as any).getHost(appConfig.e2b.vitePort);
+    this.sandboxInfo = {
+      sandboxId,
+      url: `https://${host}`,
+      provider: 'e2b',
+      createdAt: new Date(),
+    };
+    if (typeof this.sandbox.setTimeout === 'function') {
+      this.sandbox.setTimeout(appConfig.e2b.timeoutMs);
+    }
+    return this.sandboxInfo;
+  }
+
+  private async cleanupFailedCreate(): Promise<void> {
+    if (this.viteCommand) {
+      try { await this.viteCommand.kill(); } catch { /* best effort */ }
+      this.viteCommand = null;
+    }
+    if (this.sandbox) {
+      try { await this.sandbox.kill(); } catch { /* best effort */ }
+      this.sandbox = null;
+    }
+    this.sandboxInfo = null;
+    this.existingFiles.clear();
   }
 
   async runCommand(command: string): Promise<CommandResult> {

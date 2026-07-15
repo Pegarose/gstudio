@@ -1,4 +1,4 @@
-import type { CheckResult, ResponsiveCheckResult } from "../contracts/validation";
+import type { CheckResult, ResponsiveCheckResult, ValidationFailureClass } from "../contracts/validation";
 import {
   formatAccessibilityEvidence,
   playwrightBrowserRunner,
@@ -17,6 +17,8 @@ export interface BrowserValidationReport {
   reducedMotion: CheckResult;
   accessibility: CheckResult;
   passed: boolean;
+  failureClass?: ValidationFailureClass;
+  failureEvidence?: string;
 }
 
 function buildRuntimeCheck(runtimeErrors: string[]): CheckResult {
@@ -29,7 +31,15 @@ function buildRuntimeCheck(runtimeErrors: string[]): CheckResult {
 }
 
 export async function validateBrowser({ runner = playwrightBrowserRunner, ...input }: BrowserValidationInput): Promise<BrowserValidationReport> {
-  const result = await runner.run(input);
+  let result;
+  try {
+    result = await runner.run(input);
+  } catch (error) {
+    return infrastructureFailureReport(error);
+  }
+  if (result.failureClass) {
+    return infrastructureFailureReport(result.failureEvidence ?? "Browser validation infrastructure is unavailable.", result.failureClass);
+  }
   const runtime = buildRuntimeCheck(result.runtimeErrors);
   const responsive = result.responsive.map((probe) => ({
     width: probe.width,
@@ -69,5 +79,25 @@ export async function validateBrowser({ runner = playwrightBrowserRunner, ...inp
       && keyboard.passed
       && reducedMotion.passed
       && accessibility.passed,
+  };
+}
+
+function infrastructureFailureReport(
+  error: unknown,
+  failureClass: ValidationFailureClass = "sandbox-infrastructure",
+): BrowserValidationReport {
+  const evidence = typeof error === "string"
+    ? error
+    : "Chromium executable is unavailable in the web validation environment. Rebuild the web image with the Playwright browser cache, then retry sandbox validation.";
+  const failed = { passed: false, evidence };
+  return {
+    runtime: failed,
+    responsive: [],
+    keyboard: failed,
+    reducedMotion: failed,
+    accessibility: failed,
+    passed: false,
+    failureClass,
+    failureEvidence: evidence,
   };
 }

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type Page } from "@playwright/test";
+import type { ValidationFailureClass } from "../contracts/validation";
 
 export const REQUIRED_VIEWPORT_WIDTHS = [320, 375, 414, 768] as const;
 
@@ -29,6 +30,8 @@ export interface BrowserScriptResult {
   runtimeErrors: string[];
   responsive: BrowserResponsiveProbe[];
   axeViolations: AxeViolationEvidence[];
+  failureClass?: ValidationFailureClass;
+  failureEvidence?: string;
 }
 
 export interface BrowserScriptRunner {
@@ -276,7 +279,18 @@ async function inspectViewport(page: Page, url: string, width: number): Promise<
 }
 
 export async function runPlaywrightBrowserScript(input: BrowserScriptInput): Promise<BrowserScriptResult> {
-  const browser = await chromium.launch({ headless: true });
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    return {
+      runtimeErrors: [],
+      responsive: [],
+      axeViolations: [],
+      failureClass: "sandbox-infrastructure",
+      failureEvidence: browserInfrastructureEvidence(error),
+    };
+  }
   const runtimeErrors: string[] = [];
 
   try {
@@ -309,6 +323,14 @@ export async function runPlaywrightBrowserScript(input: BrowserScriptInput): Pro
   } finally {
     await browser.close();
   }
+}
+
+function browserInfrastructureEvidence(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (message.includes("executable") || message.includes("chromium") || message.includes("playwright")) {
+    return "Chromium executable is unavailable in the web validation environment. Rebuild the web image with the Playwright browser cache, then retry sandbox validation.";
+  }
+  return "The browser validation worker could not start. Rebuild the web image and retry sandbox validation.";
 }
 
 export const playwrightBrowserRunner: BrowserScriptRunner = {

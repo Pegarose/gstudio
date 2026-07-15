@@ -198,3 +198,19 @@ test("browser validator follows Chromium's single Tab stop for a same-name radio
 
   assert.equal(report.keyboard.passed, true, report.keyboard.evidence);
 });
+
+test("browser validator classifies a missing Chromium executable as sandbox infrastructure", async () => {
+  const report = await validateBrowser({
+    url: `${fixtureOrigin}/passing`,
+    desktopWidth: 1440,
+    runner: {
+      run: async () => {
+        throw new Error("Executable doesn't exist at /root/.cache/ms-playwright/chromium");
+      },
+    },
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.failureClass, "sandbox-infrastructure");
+  assert.match(report.failureEvidence ?? "", /Chromium|browser/i);
+});

@@ -120,3 +120,59 @@ test('restartViteServer kills the tracked process before starting its replacemen
   ]);
   assert.equal((provider as unknown as { viteCommand: unknown }).viteCommand, replacementHandle);
 });
+
+test('createSandbox retries one transient fetch failure and cleans up a partial sandbox before retrying', async () => {
+  const originalCreate = Sandbox.create;
+  let createCount = 0;
+  let killCount = 0;
+  const partialSandbox = {
+    sandboxId: 'partial-sandbox',
+    getHost: () => { throw new Error('fetch failed while resolving sandbox host'); },
+    kill: async () => { killCount += 1; },
+  };
+  const successfulSandbox = {
+    sandboxId: 'successful-sandbox',
+    getHost: (port: number) => `sandbox-${port}.e2b.app`,
+    setTimeout: () => undefined,
+  };
+
+  Object.defineProperty(Sandbox, 'create', {
+    configurable: true,
+    value: async () => {
+      createCount += 1;
+      if (createCount === 1) return partialSandbox;
+      return successfulSandbox;
+    },
+  });
+
+  try {
+    const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
+    const info = await provider.createSandbox();
+
+    assert.equal(info.sandboxId, 'successful-sandbox');
+    assert.equal(createCount, 2);
+    assert.equal(killCount, 1);
+  } finally {
+    Object.defineProperty(Sandbox, 'create', { configurable: true, value: originalCreate });
+  }
+});
+
+test('createSandbox does not retry non-transient provider errors', async () => {
+  const originalCreate = Sandbox.create;
+  let createCount = 0;
+  Object.defineProperty(Sandbox, 'create', {
+    configurable: true,
+    value: async () => {
+      createCount += 1;
+      throw new Error('invalid E2B API key');
+    },
+  });
+
+  try {
+    const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
+    await assert.rejects(() => provider.createSandbox(), /invalid E2B API key/);
+    assert.equal(createCount, 1);
+  } finally {
+    Object.defineProperty(Sandbox, 'create', { configurable: true, value: originalCreate });
+  }
+});
