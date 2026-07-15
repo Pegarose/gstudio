@@ -81,9 +81,11 @@ test("OmniRoute language model normalizes the configured API base URL", () => {
   try {
     const languageModel = getLanguageModel(resolveModelRoute("coder"));
     const internalModel = languageModel as unknown as {
+      provider: string;
       config: { url: (options: { path: string }) => URL };
     };
 
+    assert.equal(internalModel.provider, "openai.chat");
     assert.equal(
       internalModel.config.url({ path: "/chat/completions" }).toString().startsWith("https://omniroute.tr4.net/v1"),
       true,

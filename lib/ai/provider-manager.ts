@@ -25,6 +25,34 @@ function withV1Suffix(baseURL: string | undefined): string | undefined {
   return `${baseURL.replace(/\/$/, '')}/v1`;
 }
 
+type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+/**
+ * OmniRoute streams unless `stream` is sent explicitly. AI SDK's non-stream
+ * calls omit that field, which otherwise produces a successful but empty JSON
+ * response. Preserve explicit stream requests while making all other chat
+ * completions unambiguously non-streaming.
+ */
+export function createOmniRouteFetch(fetchImplementation: FetchImplementation = globalThis.fetch): FetchImplementation {
+  return async (input, init) => {
+    if (typeof init?.body !== 'string') return fetchImplementation(input, init);
+
+    try {
+      const payload = JSON.parse(init.body) as Record<string, unknown>;
+      if (!payload || Array.isArray(payload) || Object.hasOwn(payload, 'stream')) {
+        return fetchImplementation(input, init);
+      }
+
+      return fetchImplementation(input, {
+        ...init,
+        body: JSON.stringify({ ...payload, stream: false }),
+      });
+    } catch {
+      return fetchImplementation(input, init);
+    }
+  };
+}
+
 export function assertOmniRouteConfigured(): void {
   if (!process.env.OMNIROUTE_API_KEY || !process.env.OMNIROUTE_API_BASE) {
     throw new Error("OMNIROUTE_API_KEY and OMNIROUTE_API_BASE must be configured before generation");
@@ -77,6 +105,9 @@ function getOrCreateClient(provider: ModelProvider, overrides: Pick<ModelRoute, 
     case 'google':
       client = createGoogleGenerativeAI({ apiKey, baseURL });
       break;
+    case 'omniroute':
+      client = createOpenAI({ apiKey, baseURL, fetch: createOmniRouteFetch() });
+      break;
     default:
       client = createOpenAI({ apiKey, baseURL });
   }
@@ -91,6 +122,9 @@ export function getProviderForRoute(route: ModelRoute): ProviderResolution {
 
 export function getLanguageModel(route: ModelRoute): LanguageModel {
   const { client, actualModel } = getProviderForRoute(route);
+  if (route.provider === 'omniroute') {
+    return (client as ReturnType<typeof createOpenAI>).chat(actualModel) as LanguageModel;
+  }
   return (client as unknown as (modelId: string) => LanguageModel)(actualModel);
 }
 
