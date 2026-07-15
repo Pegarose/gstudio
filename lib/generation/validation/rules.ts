@@ -10,6 +10,7 @@ export const STATIC_RULE_CODES = [
   "invented-proof",
   "missing-focus-visible",
   "duplicate-primary-cta",
+  "esm-require",
 ] as const;
 
 export type StaticRuleCode = (typeof STATIC_RULE_CODES)[number];

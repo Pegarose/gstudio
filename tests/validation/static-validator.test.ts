@@ -156,6 +156,33 @@ test("static validation rejects arbitrary literal Tailwind colors and fonts", ()
   assert.ok(codes.includes("inline-font-family"));
 });
 
+test("static validation accepts token references in inline styles", () => {
+  const violations = validateStaticRules({
+    files: [{
+      path: "src/App.tsx",
+      content: "export const App = () => <main style={{ color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' }}><h1>Welcome</h1></main>;",
+    }],
+    brief: passingBrief,
+    plan: passingPlan,
+  });
+
+  assert.equal(violations.some((violation) => violation.code === "inline-color"), false);
+  assert.equal(violations.some((violation) => violation.code === "inline-font-family"), false);
+});
+
+test("static validation rejects literal inline color values", () => {
+  const violations = validateStaticRules({
+    files: [{
+      path: "src/App.tsx",
+      content: "export const App = () => <main style={{ color: '#fff' }}><h1>Welcome</h1></main>;",
+    }],
+    brief: passingBrief,
+    plan: passingPlan,
+  });
+
+  assert.ok(violations.some((violation) => violation.code === "inline-color"));
+});
+
 test("passing files produce no static violations", () => {
   assert.deepEqual(
     validateStaticRules({

@@ -10,6 +10,7 @@ import {
   type ValidationFile,
 } from "../contracts/validation";
 import type { StaticRuleCode } from "./rules";
+import { normalizeGeneratedSource } from "./source-normalizer";
 
 export interface StaticValidationInput {
   files: ValidationFile[];
@@ -39,13 +40,23 @@ const NUMERIC_CLAIM = /\b\d+(?:[,.]\d+)*(?:\s*(?:%|x|customers?|teams?|users?|aw
 const PROOF_CLAIM = /\btrusted by\b|\bcustomers?\b|\bawards?\b|["“][^"”]{12,}["”]/i;
 
 export function validateStaticRules(input: StaticValidationInput): RuleViolation[] {
+  const normalizedSource = normalizeGeneratedSource(input.files);
   const artifact = GenerationArtifactSchema.parse({
-    files: input.files,
+    files: normalizedSource.files,
     packages: input.packages ?? [],
   });
   const brief = ProductBriefSchema.parse(input.brief);
   const plan = DesignPlanSchema.parse(input.plan);
   const violations: RuleViolation[] = [];
+  for (const finding of normalizedSource.findings) {
+    violations.push(violation(
+      finding.code,
+      finding.file,
+      finding.line,
+      finding.message,
+      finding.evidence,
+    ));
+  }
   const h1s: SourceLocation[] = [];
   const interactiveElements: InteractiveElement[] = [];
   const primaryCtas: PrimaryCta[] = [];
@@ -234,7 +245,7 @@ function inspectOpeningElement(
 
   const styleAttribute = attributeNamed(node, "style");
   const classText = classNameText(node);
-  if (styleAttribute && hasInlineStyleProperty(styleAttribute, /color/i)) {
+  if (styleAttribute && hasInlineStyleProperty(styleAttribute, /color/i, true)) {
     violations.push(violation(
       "inline-color",
       file,
@@ -243,7 +254,7 @@ function inspectOpeningElement(
       styleAttribute.getText(sourceFile),
     ));
   }
-  if (styleAttribute && hasInlineStyleProperty(styleAttribute, /font-?family/i)) {
+  if (styleAttribute && hasInlineStyleProperty(styleAttribute, /font-?family/i, true)) {
     violations.push(violation(
       "inline-font-family",
       file,
@@ -303,9 +314,13 @@ function hasAttribute(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement, nam
   return Boolean(attributeNamed(node, name));
 }
 
-function hasInlineStyleProperty(attribute: ts.JsxAttribute, propertyName: RegExp): boolean {
+function hasInlineStyleProperty(attribute: ts.JsxAttribute, propertyName: RegExp, allowTokenReference = false): boolean {
   if (attribute.initializer && ts.isStringLiteral(attribute.initializer)) {
-    return propertyName.test(attribute.initializer.text);
+    return attribute.initializer.text.split(";").some((declaration) => {
+      const match = declaration.match(/^\s*([\w-]+)\s*:\s*(.*?)\s*$/);
+      if (!match || !propertyName.test(match[1])) return false;
+      return !allowTokenReference || !isTokenReference(match[2]);
+    });
   }
   const expression = expressionFromInitializer(attribute.initializer);
   if (!expression || !ts.isObjectLiteralExpression(expression)) {
@@ -313,8 +328,16 @@ function hasInlineStyleProperty(attribute: ts.JsxAttribute, propertyName: RegExp
   }
   return expression.properties.some((property) => {
     if (!ts.isPropertyAssignment(property)) return false;
-    return propertyName.test(property.name.getText());
+    if (!propertyName.test(property.name.getText())) return false;
+    return !allowTokenReference || !isTokenReference(property.initializer);
   });
+}
+
+function isTokenReference(value: ts.Expression | string): boolean {
+  const text = typeof value === "string"
+    ? value
+    : isTextLiteral(value) ? value.text : "";
+  return /^var\(\s*--[\w-]+\s*\)$/i.test(text.trim());
 }
 
 function hasItalicClass(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement): boolean {

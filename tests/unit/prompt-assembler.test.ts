@@ -8,7 +8,7 @@ function section(system: string, name: string): string {
   return match[1];
 }
 
-test("clone context loads clone-fidelity from the canonical directory", () => {
+test("legacy clone context normalizes to the inspiration skill from the canonical directory", () => {
   const result = assembleSystemContext({
     mode: "clone",
     prompt: "Clone https://example.com",
@@ -16,7 +16,8 @@ test("clone context loads clone-fidelity from the canonical directory", () => {
     designPlan: null,
   });
 
-  assert.ok(result.skills.includes("clone-fidelity"));
+  assert.ok(result.skills.includes("brand-extract"));
+  assert.equal(result.skills.includes("clone-fidelity"), false);
   assert.match(result.system, /Your output must look MADE, not GENERATED/);
 });
 
