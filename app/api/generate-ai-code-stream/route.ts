@@ -1141,6 +1141,8 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           } else if (!hasBackendFiles) {
             contextParts.push('\n🚨 USER BRIEF IS AUTHORITATIVE - FIRST GENERATION CONTRACT');
             contextParts.push('Treat the user request as the source of truth. Do not add sections, features, packages, metrics, testimonials, logos, or named people that the user did not request.');
+            contextParts.push('If the user specifies an exact file count or exact file paths, treat that as a hard contract: emit exactly those files and no extra files, components, routes, or generic template sections.');
+            contextParts.push('Never allow the design skill, preview example, or default app template to override an explicit file-count or content constraint in the user brief.');
             contextParts.push('Choose the smallest complete artifact that satisfies the brief. Only introduce a header, hero, feature grid, footer, or other page pattern when the brief asks for it or it is structurally necessary.');
             contextParts.push('Use honest real content from the brief, or clearly labelled placeholders when facts are unknown. Keep every file complete and runnable.');
             contextParts.push('\n⚠️ OUTPUT FORMAT:');

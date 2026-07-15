@@ -3557,8 +3557,10 @@ ${filteredContext || 'Create a premium, modern dashboard landing page.'}
 
 IMPORTANT INSTRUCTIONS:
 - Create a COMPLETE, working React application
-- Implement a modern, premium UI/UX following the requested style
-- Use Tailwind CSS for all styling (no custom CSS files)
+- Implement only the experience described in USER SPECIFICATIONS / REQUIREMENTS
+- If the user specifies an exact file count or exact file paths, that is a hard contract: emit only those files and no extra components, routes, sections, or demo content
+- Do not fall back to a generic landing page, hero/features/footer template, invented metrics, testimonials, or named brands
+- Use Tailwind CSS or the requested stylesheet files; never create unrequested files just to satisfy a default template
 - Write clean React components, utilizing standard hook imports
 - Avoid placeholders; write real, working code.
 - Make sure the app renders immediately with visible content.`;
