@@ -153,6 +153,7 @@ export async function repairGeneratedCode({
     model,
     system: "You are G Studio's code repair agent. Return only complete repaired file artifacts.",
     prompt: buildRepairPrompt({ candidate, validation }),
+    maxOutputTokens: 8192,
   });
 
   let repairedCandidate = "";

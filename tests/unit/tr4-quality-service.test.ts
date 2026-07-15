@@ -152,6 +152,7 @@ test("repairGeneratedCode turns a streamed partial artifact into a terminal qual
     },
   );
   assert.equal(model.doStreamCalls.length, 1);
+  assert.equal(model.doStreamCalls[0].maxOutputTokens, 8192);
 });
 
 test("repairGeneratedCode turns a streamed response without file tags into a terminal quality error", async () => {

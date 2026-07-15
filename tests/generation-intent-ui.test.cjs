@@ -56,6 +56,11 @@ test('generation stream timeout measures inactivity instead of total duration', 
   assert.doesNotMatch(route, /AbortSignal\.timeout\(providerTimeoutMs\)/);
 });
 
+test('generation uses the AI SDK v5 output-token option', () => {
+  assert.match(route, /maxOutputTokens:\s*8192/);
+  assert.doesNotMatch(route, /maxTokens:\s*8192/);
+});
+
 test('generation and edit intent routes resolve only configured OmniRoute models', () => {
   assert.match(route, /resolveTeamModelRoute/);
   assert.match(route, /getLanguageModel/);

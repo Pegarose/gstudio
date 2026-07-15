@@ -1270,7 +1270,7 @@ If you're running out of space, generate FEWER files but make them COMPLETE.
 It's better to have 3 complete files than 10 incomplete files.`
             }
           ],
-          maxTokens: 8192, // Reduce to ensure completion
+          maxOutputTokens: 8192, // Reduce to ensure completion
           stopSequences: [] // Don't stop early
           // XML tags provide package detection without tool/function calls.
         };
