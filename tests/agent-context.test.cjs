@@ -33,3 +33,14 @@ test('generic component wording in a full-page inspiration prompt does not activ
 
   assert.deepEqual(loaded.skills, ['design-core', 'design-intelligence', 'brand-extract']);
 });
+
+test('explicit scratch file contracts skip page-template skills', async () => {
+  const { loadAgentContext } = await import('../lib/gstudio-agent-context.js');
+  const loaded = loadAgentContext({
+    intent: 'scratch',
+    prompt: 'Create exactly two files only: src/App.jsx and src/index.css. Do not add any other files or sections.'
+  });
+
+  assert.deepEqual(loaded.skills, []);
+  assert.doesNotMatch(loaded.skillPrompt, /SKILL: DESIGN-CORE/);
+});
