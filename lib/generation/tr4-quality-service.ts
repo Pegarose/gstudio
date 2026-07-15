@@ -130,18 +130,50 @@ ORIGINAL CANDIDATE:
 ${candidate}`;
 }
 
+export function normalizeGenerationValidation(value: unknown): GenerationValidation {
+  if (!value || typeof value !== "object") {
+    throw new Error("Generation review must return a JSON object");
+  }
+
+  const record = value as Record<string, unknown>;
+  let findings = record.findings;
+  if (typeof findings === "string") {
+    try {
+      findings = JSON.parse(findings);
+    } catch {
+      throw new Error("Generation review findings must be a JSON array");
+    }
+  }
+
+  return GenerationValidationSchema.parse({ ...record, findings });
+}
+
 export async function reviewGeneratedCode({
   model,
   prompt,
   candidate,
 }: ReviewInput & { model: LanguageModel }): Promise<GenerationValidation> {
-  const result = await generateObject({
-    model,
-    schema: GenerationValidationSchema,
-    messages: buildReviewMessages({ prompt, candidate }),
-  });
+  try {
+    const result = await generateObject({
+      model,
+      schema: GenerationValidationSchema,
+      messages: buildReviewMessages({ prompt, candidate }),
+    });
 
-  return result.object;
+    return normalizeGenerationValidation(result.object);
+  } catch (error) {
+    const text = typeof error === "object" && error !== null && "text" in error
+      ? (error as { text?: unknown }).text
+      : undefined;
+
+    if (typeof text !== "string") throw error;
+
+    try {
+      return normalizeGenerationValidation(JSON.parse(text));
+    } catch {
+      throw error;
+    }
+  }
 }
 
 export async function repairGeneratedCode({

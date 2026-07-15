@@ -6,6 +6,7 @@ import {
   buildRepairPrompt,
   buildReviewMessages,
   repairGeneratedCode,
+  reviewGeneratedCode,
 } from "../../lib/generation/tr4-quality-service";
 import {
   GenerationQualityError,
@@ -22,6 +23,33 @@ test("buildReviewMessages includes the original brief and generated candidate", 
   assert.match(messages[0].content, /blocking/);
   assert.match(messages[1].content, /Build a newsroom/);
   assert.match(messages[1].content, /<file path="src\/App\.jsx">ok<\/file>/);
+});
+
+test("reviewGeneratedCode normalizes a JSON-encoded findings array from an OpenAI-compatible provider", async () => {
+  const model = new MockLanguageModelV2({
+    doGenerate: async () => ({
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          pass: true,
+          summary: "Candidate is valid.",
+          findings: JSON.stringify([]),
+        }),
+      }],
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      warnings: [],
+    } as any),
+  });
+
+  const validation = await reviewGeneratedCode({
+    model,
+    prompt: "Build a compact homepage",
+    candidate: '<file path="src/App.jsx">export default function App() { return null; }</file>',
+  });
+
+  assert.equal(validation.pass, true);
+  assert.deepEqual(validation.findings, []);
 });
 
 test("buildRepairPrompt requests a complete corrected candidate for blocking findings", () => {
