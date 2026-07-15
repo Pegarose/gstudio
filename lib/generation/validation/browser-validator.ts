@@ -21,6 +21,9 @@ export interface BrowserValidationReport {
   failureEvidence?: string;
 }
 
+const TRANSIENT_PAGE_EVALUATE_ERROR = /page\.evaluate:\s*(?:referenceerror|syntaxerror|typeerror)\b/i;
+const BROWSER_RETRY_DELAY_MS = 250;
+
 function buildRuntimeCheck(runtimeErrors: string[]): CheckResult {
   return {
     passed: runtimeErrors.length === 0,
@@ -33,9 +36,13 @@ function buildRuntimeCheck(runtimeErrors: string[]): CheckResult {
 export async function validateBrowser({ runner = playwrightBrowserRunner, ...input }: BrowserValidationInput): Promise<BrowserValidationReport> {
   let result;
   try {
-    result = await runner.run(input);
+    result = await runBrowserWithTransientRetry(runner, input);
   } catch (error) {
-    return infrastructureFailureReport(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const failureClass: ValidationFailureClass = /executable|chromium|playwright|browser validation worker/i.test(message)
+      ? "sandbox-infrastructure"
+      : "runtime";
+    return infrastructureFailureReport(error, failureClass);
   }
   if (result.failureClass) {
     return infrastructureFailureReport(result.failureEvidence ?? "Browser validation infrastructure is unavailable.", result.failureClass);
@@ -82,13 +89,30 @@ export async function validateBrowser({ runner = playwrightBrowserRunner, ...inp
   };
 }
 
+async function runBrowserWithTransientRetry(
+  runner: BrowserScriptRunner,
+  input: BrowserScriptInput,
+) {
+  try {
+    return await runner.run(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!TRANSIENT_PAGE_EVALUATE_ERROR.test(message)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, BROWSER_RETRY_DELAY_MS));
+    return runner.run(input);
+  }
+}
+
 function infrastructureFailureReport(
   error: unknown,
   failureClass: ValidationFailureClass = "sandbox-infrastructure",
 ): BrowserValidationReport {
-  const evidence = typeof error === "string"
+  const rawMessage = typeof error === "string"
     ? error
-    : "Chromium executable is unavailable in the web validation environment. Rebuild the web image with the Playwright browser cache, then retry sandbox validation.";
+    : error instanceof Error ? error.message : "Browser validation infrastructure is unavailable.";
+  const evidence = /executable|chromium|playwright/i.test(rawMessage)
+    ? "Chromium executable is unavailable in the web validation environment. Rebuild the web image with the Playwright browser cache, then retry sandbox validation."
+    : `Browser validation could not inspect the sandbox preview: ${rawMessage.slice(0, 240)}`;
   const failed = { passed: false, evidence };
   return {
     runtime: failed,

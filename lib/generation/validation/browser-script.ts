@@ -1,6 +1,6 @@
-import AxeBuilder from "@axe-core/playwright";
 import { chromium, type Page } from "@playwright/test";
 import type { ValidationFailureClass } from "../contracts/validation";
+import { readBundledAxeSource } from "./axe-runner";
 
 export const REQUIRED_VIEWPORT_WIDTHS = [320, 375, 414, 768] as const;
 
@@ -154,6 +154,15 @@ function viewportHeight(width: number): number {
   return width < 768 ? 844 : 900;
 }
 
+async function runBrowserStep<T>(step: string, action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${step}: ${message}`);
+  }
+}
+
 function formatFocusAppearance(appearance: FocusAppearance): string {
   return "outline=" + appearance.outline + "; boxShadow=" + appearance.boxShadow + "; border=" + appearance.border;
 }
@@ -242,7 +251,19 @@ async function collectInfinitePrimaryAnimations(page: Page): Promise<string[]> {
 }
 
 async function collectAxeViolations(page: Page, width: number): Promise<AxeViolationEvidence[]> {
-  const axe = await new AxeBuilder({ page }).analyze();
+  await page.addScriptTag({ content: await readBundledAxeSource() });
+  const axe = await page.evaluate(async () => {
+    const axe = (globalThis as typeof globalThis & {
+      axe?: { run: () => Promise<{ violations: Array<{
+        id: string;
+        impact: string | null;
+        helpUrl: string;
+        nodes: Array<{ target: Array<string | string[]> }>;
+      }> }> };
+    }).axe;
+    if (!axe) throw new Error("Axe runtime did not load in the preview page.");
+    return axe.run();
+  });
 
   return axe.violations
     .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
@@ -259,15 +280,15 @@ async function collectAxeViolations(page: Page, width: number): Promise<AxeViola
 
 async function inspectViewport(page: Page, url: string, width: number): Promise<BrowserResponsiveProbe> {
   await page.setViewportSize({ width, height: viewportHeight(width) });
-  await page.goto(url, { waitUntil: "networkidle" });
-  await page.evaluate(createPageExpression<Promise<void>>(DOCUMENT_FONTS_READY_SCRIPT));
+  await runBrowserStep(`viewport ${width} navigation`, () => page.goto(url, { waitUntil: "networkidle" }).then(() => undefined));
+  await runBrowserStep(`viewport ${width} fonts`, () => page.evaluate(createPageExpression<Promise<void>>(DOCUMENT_FONTS_READY_SCRIPT)));
 
-  const dimensions = await page.evaluate(createPageExpression<{
+  const dimensions = await runBrowserStep(`viewport ${width} dimensions`, () => page.evaluate(createPageExpression<{
     scrollWidth: number;
     clientWidth: number;
-  }>(DOCUMENT_DIMENSIONS_SCRIPT));
-  const focus = await collectFocusProbe(page);
-  const infinitePrimaryAnimations = await collectInfinitePrimaryAnimations(page);
+  }>(DOCUMENT_DIMENSIONS_SCRIPT)));
+  const focus = await runBrowserStep(`viewport ${width} keyboard focus`, () => collectFocusProbe(page));
+  const infinitePrimaryAnimations = await runBrowserStep(`viewport ${width} animation probe`, () => collectInfinitePrimaryAnimations(page));
 
   return {
     width,
@@ -313,7 +334,7 @@ export async function runPlaywrightBrowserScript(input: BrowserScriptInput): Pro
 
       for (const width of widths) {
         responsive.push(await inspectViewport(page, input.url, width));
-        axeViolations.push(...await collectAxeViolations(page, width));
+        axeViolations.push(...await runBrowserStep(`viewport ${width} accessibility`, () => collectAxeViolations(page, width)));
       }
 
       return { runtimeErrors, responsive, axeViolations };

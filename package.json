@@ -13,6 +13,7 @@
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
     "test:reference": "tsx --test tests/reference/**/*.test.ts",
     "test:validation": "tsx --test tests/validation/**/*.test.ts",
+    "test:smoke": "node --test tests/smoke/reference-builder-smoke.test.cjs",
     "test:e2e": "playwright test",
     "test:all": "npm run test:legacy && npm run test:unit && npm run test:integration"
   },

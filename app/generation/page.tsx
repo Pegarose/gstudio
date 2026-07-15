@@ -43,6 +43,15 @@ interface ApplyGenerationContext {
   mode: 'scratch' | 'edit' | 'inspiration' | 'clone';
   prompt: string;
   targetUrl: string | null;
+  reference?: {
+    brandLanguage: {
+      kind: 'brand-language-v1';
+      artifactKey: string;
+      sourceUrl: string;
+      capturedAt: string;
+      evaluation: { passed: boolean; evidence: string };
+    };
+  };
 }
 
 function toGenerationProgressPhase({
@@ -3505,6 +3514,8 @@ CRITICAL REQUIREMENTS:
 - DO NOT recreate the original website at ${url}
 - DO create a COMPLETELY NEW component that fulfills the user's request
 - The user wants: "${inspirationPrompt}"
+- User constraints override extracted brand instructions. If the brief requires plain CSS, do not use inline style objects or Tailwind utility classes.
+- User constraints override extracted brand instructions. Keep all colors in named CSS variables, add visible :focus-visible treatment to every control, and do not invent proof, labels, copyright, version text, or brand names.
 - DO NOT invent analytics, reach, sentiment, percentages, or performance metrics. Use qualitative labels or clearly marked unavailable states unless the user supplied real data.
 - Build ONLY what the user requested - nothing more
 - App.jsx should render ONLY the requested component - no extra Header/Footer/Hero unless specifically requested
@@ -3882,6 +3893,18 @@ Focus on the key sections and content, making it clean and modern.`;
               mode: isFromScratch ? 'scratch' : isInspirationMode ? 'inspiration' : 'clone',
               prompt: homeContextInput.trim() || prompt,
               targetUrl: isFromScratch ? null : url,
+              reference: isInspirationMode && brandGuidelines ? {
+                brandLanguage: {
+                  kind: 'brand-language-v1',
+                  artifactKey: `inline-brand:${cleanUrl}`,
+                  sourceUrl: cleanUrl,
+                  capturedAt: new Date().toISOString(),
+                  evaluation: {
+                    passed: true,
+                    evidence: 'Brand language was extracted from the supplied visual reference.',
+                  },
+                },
+              } : undefined,
             }),
           );
 

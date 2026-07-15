@@ -1,7 +1,7 @@
-import { SandboxProvider } from './types';
+import { SandboxProvider, SandboxInfo as ProviderSandboxInfo } from './types';
 import { SandboxFactory } from './factory';
 
-interface SandboxInfo {
+interface ManagedSandboxInfo {
   sandboxId: string;
   provider: SandboxProvider;
   createdAt: Date;
@@ -9,8 +9,25 @@ interface SandboxInfo {
 }
 
 class SandboxManager {
-  private sandboxes: Map<string, SandboxInfo> = new Map();
+  private sandboxes: Map<string, ManagedSandboxInfo> = new Map();
   private activeSandboxId: string | null = null;
+
+  /**
+   * Allocate through the same registry used by live apply requests so the
+   * provider that starts Vite is also the provider that later writes files.
+   */
+  async allocate(providerName: 'e2b' | 'vercel'): Promise<ProviderSandboxInfo> {
+    const provider = SandboxFactory.create(providerName);
+    const info = await provider.createSandbox();
+    this.registerSandbox(info.sandboxId, provider);
+    return info;
+  }
+
+  /** Resolve an existing provider, reconnecting only when this process has no
+   * live registration for the sandbox. */
+  async connect(sandboxId: string): Promise<SandboxProvider> {
+    return this.getOrCreateProvider(sandboxId);
+  }
 
   /**
    * Get or create a sandbox provider for the given sandbox ID

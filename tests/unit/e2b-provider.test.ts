@@ -50,6 +50,23 @@ test('readFile throws an ENOENT error for a structured E2B FileNotFoundError', a
   );
 });
 
+test('readFile retries one transient E2B fetch failure before returning content', async () => {
+  let calls = 0;
+  const provider = new E2BProvider({ e2b: { apiKey: 'test-key' } });
+  Object.assign(provider as unknown as Record<string, unknown>, {
+    sandbox: {
+      runCode: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('fetch failed while reading sandbox file');
+        return { logs: { stdout: ['file contents'], stderr: [] } };
+      },
+    },
+  });
+
+  assert.equal(await provider.readFile('src/App.jsx'), 'file contents');
+  assert.equal(calls, 2);
+});
+
 test('setupViteApp starts a managed Vite process without broad pkill', async () => {
   const provider = new E2BProvider({ e2b: { apiKey: 'test-key', timeoutMs: 1234 } });
   const backgroundHandle = { kill: async () => undefined };

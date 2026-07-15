@@ -397,11 +397,3 @@
   .conversation { padding: 1rem !important; }
   .previewLink { display: none; }
 }
-
-@media (min-width: 769px) and (max-width: 1180px) {
-  .chatShell {
-    width: 360px;
-    min-width: 360px;
-    flex-basis: 360px;
-  }
-}

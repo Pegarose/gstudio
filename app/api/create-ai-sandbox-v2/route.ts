@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSandboxService } from "@/lib/sandbox/service/sandbox-service";
+import { sandboxManager } from "@/lib/sandbox/sandbox-manager";
 import { isTransientE2BProvisioningError } from "@/lib/sandbox/providers/e2b-provider";
 
 const CreateSandboxRequestSchema = z.object({
@@ -12,7 +13,7 @@ const CreateSandboxRequestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const input = CreateSandboxRequestSchema.parse(await request.json());
-    const sandboxService = createSandboxService();
+    const sandboxService = createSandboxService({ providers: sandboxManager });
     const sandbox = await sandboxService.allocate(input);
     await sandboxService.setupViteApp(sandbox.sandboxId);
 

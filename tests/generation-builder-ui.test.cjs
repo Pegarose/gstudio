@@ -117,6 +117,11 @@ test('builder reports a passed generation quality gate', () => {
   assert.match(source, /repairCount/);
 });
 
+test('builder carries extracted inspiration evidence into live apply validation', () => {
+  assert.match(source, /brand-language-v1/);
+  assert.match(source, /reference:\s*isInspirationMode/);
+});
+
 test('chat generation stream propagates terminal SSE errors after parsing', () => {
   const chatStreamStart = source.indexOf("const response = await fetch('/api/generate-ai-code-stream'");
   const chatStreamEnd = source.indexOf('if (generatedCode) {', chatStreamStart);

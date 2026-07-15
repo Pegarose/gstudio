@@ -612,6 +612,7 @@ export function createApplyAiCodeStreamRoute(overrides: ApplyAiCodeStreamRouteDe
           sandboxId: liveSandboxId,
           sandboxUrl: providerInfo.url,
           desktopWidth: 1440,
+          reference: generationContext.reference,
           generation: {
             id: generation.id,
             projectId: generation.projectId,
@@ -883,6 +884,18 @@ const GenerationContextSchema = z.object({
   mode: z.enum(['scratch', 'edit', 'inspiration', 'clone']),
   prompt: z.string().min(1),
   targetUrl: z.string().url().nullable(),
+  reference: z.object({
+    brandLanguage: z.object({
+      kind: z.literal('brand-language-v1'),
+      artifactKey: z.string().min(1),
+      sourceUrl: z.string().url(),
+      capturedAt: z.string().min(1),
+      evaluation: z.object({
+        passed: z.boolean(),
+        evidence: z.string().min(1),
+      }),
+    }),
+  }).optional(),
 });
 
 function safeValidationReason(report: ValidationReport): string {

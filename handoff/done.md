@@ -6,7 +6,7 @@
 
 ## Summary
 
-This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses API to the OpenAI-compatible Chat Completions API, then fixed a live quality-gate repair truncation risk. The next session should finish one compact end-to-end scratch smoke test, then resume the planned builder editor/terminal UX redesign.
+This session completed the unified scratch/reference/inspiration smoke path over OmniRoute + E2B, including candidate quality validation and activation-gated apply. A transient OmniRoute empty-stream failure was isolated and made retryable. The next session can resume the planned builder editor/terminal UX redesign.
 
 ## Accomplished
 
@@ -22,7 +22,9 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 - Replaced legacy `maxTokens` with `maxOutputTokens` for initial generation, and gave repair streaming the same 8192-token ceiling (`500cca7`).
 - Added a schema-safe QA normalizer: OmniRoute review responses that encode `findings` as a JSON string are parsed and revalidated against the same Zod schema; markdown/non-JSON responses are still rejected.
 - Wired the configured QA/repair route timeouts through AI SDK v5 `abortSignal`, so long reviews and repairs cannot hold a generation indefinitely.
-- Cleaned up both disposable E2B sandboxes and both verification projects. No smoke project was left in the database.
+- Added explicit first-generation constraints for fictional proof and plain-CSS briefs, plus a regression check for transient empty streams.
+- Rebuilt Docker and ran the unified smoke harness across `scratch`, `scratch-with-reference`, and `inspiration`; all three reached `candidate-ready` and validated apply `complete`.
+- Removed all `Smoke *` and `Diag *` projects through the project DELETE API. No current smoke/diagnostic project remains; historical non-prefixed verification projects and their persisted leases were left untouched.
 
 ## Key Decisions
 
@@ -41,33 +43,32 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 - `tests/unit/omniroute-fetch.test.ts` — non-stream and streaming fetch contracts.
 - `tests/unit/model-router.test.ts` — asserts OmniRoute uses `openai.chat`.
 - `app/api/generate-ai-code-stream/route.ts` — uses AI SDK v5 `maxOutputTokens: 8192`.
+- `app/api/generate-ai-code-stream/route.ts` — bounds the legacy compatibility prompt and retries transient `empty stream` provider responses.
 - `lib/generation/tr4-quality-service.ts` — repair generation has `maxOutputTokens: 8192`.
 - `lib/generation/tr4-quality-service.ts` — normalizes provider review JSON before final Zod validation.
 - `lib/generation/tr4-quality-service.ts` — accepts optional review/repair timeouts and forwards them as abort signals.
-- `tests/generation-intent-ui.test.cjs` — checks the v5 output-token option.
+- `tests/generation-intent-ui.test.cjs` — checks the v5 output-token option, explicit prompt guardrails, and empty-stream retry.
+- `tests/smoke/reference-builder-smoke.test.cjs` — scratch, scratch-with-reference, and inspiration end-to-end coverage.
 - `tests/unit/tr4-quality-service.test.ts` — checks repair output capacity.
 
 ### Test Status
 
-- `npm run test:all` — passed after the QA timeout change: 33 legacy + 60 unit + 58 integration.
-- `npx tsc --noEmit` — passed after the final repair-limit change.
-- Focused route and quality-service tests — passed after the final repair-limit change.
-- Docker rebuilt and `gstudio-web` is running at `http://localhost:9010` on the latest image.
-- Browser validation tests were previously executed successfully in split groups because the Windows `tsx --test` glob wrapper sometimes ends without a final aggregate summary. Re-run them before asserting a fully fresh release gate.
+- `npm run test:smoke` — passed: 1 unified test covering 3 scenarios; each reached `candidate-ready` and apply `complete` (~298s).
+- `npm run test:all` — passed with exit code 0: 43 legacy + 70 unit + 58 integration.
+- `npm run test:validation` — passed with exit code 0: 44 validation tests.
+- `npx tsc --noEmit` — passed with exit code 0.
+- `npm run build` — passed; Docker image rebuilt and `gstudio-web` is running at `http://localhost:9010`.
+- Remaining build output is limited to existing Next `<img>` performance warnings and the obsolete Compose `version` warning.
 
 ### Known Issues
 
-- Full production scratch smoke has not yet reached `candidate-ready` followed by apply `complete`. The provider and QA normalizer now work live, but the real model still emits oversized candidates with fabricated metrics/invisible characters; the quality gate correctly rejects them after repair/revalidation.
-- The first long live candidate had quality findings and its repair was incomplete. The new output limit fixes the identified truncation path, but needs the compact smoke re-run to prove it end to end.
 - Docker Compose warns that its top-level `version` field is obsolete. This is non-blocking and intentionally untouched.
 
 ## Next Steps
 
-1. Re-run the compact smoke after the timeout-enabled Docker rebuild and confirm it now terminates within the configured QA/repair limits.
-2. Strengthen the generation prompt contract so an explicit two-file scratch request is not expanded into a generic multi-section landing page; preserve the quality gate’s fabricated-content and invisible-character blockers.
-3. Require `validation` + `candidate-ready`, then apply and require terminal `complete` only after live validation passes.
-4. Confirm the E2B preview renders the generated application rather than the sandbox-ready page, then kill the sandbox and delete the temporary project.
-5. Once reliability is proven, implement the planned builder UX pass: real file tabs/diff, a real terminal/build-log pane, and a collapsible Brand Guidelines context drawer. Keep `candidate-ready` visibly distinct from validated apply success.
+1. Implement the planned builder UX pass: real file tabs/diff, a real terminal/build-log pane, and a collapsible Brand Guidelines context drawer.
+2. Keep `candidate-ready` visibly distinct from validated apply success in any new builder surface.
+3. Consider a separate stale-lease cleanup policy for historical `sandbox_leases`; do not delete persisted leases ad hoc.
 
 ## Blockers & Risks
 
@@ -77,9 +78,9 @@ This session moved G Studio's OmniRoute integration from the AI SDK v5 Responses
 
 ## Context for Next Agent
 
-- Current branch is `main`; the two new local commits are `7b33eca` and `500cca7`. They have not been pushed.
+- Current branch is `main`; the reliability and unified-smoke changes are now locally committed and have not been pushed.
 - Main Docker services: web `9010`, PostgreSQL `5435`, Redis `6380`.
-- `gstudio-web` was rebuilt after `500cca7`; verify with `docker compose ps` before the next smoke test.
+- `gstudio-web` was rebuilt after the latest local commit; `docker compose ps` showed web/db/redis healthy.
 - Relevant project-memory topic: G Studio generation is intentionally split into `candidate-ready` (generation) and terminal success/rollback (live apply). Do not restore a terminal `complete` event to the generation route.
 
 ---

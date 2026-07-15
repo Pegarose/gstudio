@@ -107,7 +107,7 @@ export function buildReviewMessages({ prompt, candidate }: ReviewInput): Array<{
   return [
     {
       role: "system",
-      content: "You are G Studio's blocking code validator. Mark pass=false for incomplete files, invalid imports, broken responsive behavior, missing focus states, non-tokenized design values, or fabricated metrics. Findings must be concrete and repairable.",
+      content: "You are G Studio's blocking code validator. The explicit user brief is authoritative: do not require sections, headings, metrics, or interactions that the brief excludes. Mark pass=false only for concrete, evidence-backed defects in the candidate such as incomplete files, invalid imports, broken responsive behavior, missing focus states, non-tokenized design values, or fabricated metrics. Do not invent findings or infer defects from absent, unrequested features. Findings must be concrete and repairable.",
     },
     {
       role: "user",

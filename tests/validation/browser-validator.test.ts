@@ -214,3 +214,50 @@ test("browser validator classifies a missing Chromium executable as sandbox infr
   assert.equal(report.failureClass, "sandbox-infrastructure");
   assert.match(report.failureEvidence ?? "", /Chromium|browser/i);
 });
+
+test("browser validator keeps preview JavaScript failures repairable as runtime errors", async () => {
+  const report = await validateBrowser({
+    url: `${fixtureOrigin}/passing`,
+    desktopWidth: 1440,
+    runner: {
+      run: async () => {
+        throw new Error("page.evaluate: ReferenceError: b is not defined");
+      },
+    },
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(report.failureClass, "runtime");
+  assert.match(report.failureEvidence ?? "", /ReferenceError/);
+});
+
+test("browser validator retries a transient page-evaluate ReferenceError once", async () => {
+  let calls = 0;
+  const report = await validateBrowser({
+    url: `${fixtureOrigin}/passing`,
+    desktopWidth: 1440,
+    runner: {
+      run: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("page.evaluate: ReferenceError: b is not defined");
+        }
+        return {
+          runtimeErrors: [],
+          responsive: [{
+            width: 1440,
+            scrollWidth: 1440,
+            clientWidth: 1440,
+            focusVisible: true,
+            focusEvidence: "Visible focus confirmed.",
+            infinitePrimaryAnimations: [],
+          }],
+          axeViolations: [],
+        };
+      },
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(report.passed, true);
+});

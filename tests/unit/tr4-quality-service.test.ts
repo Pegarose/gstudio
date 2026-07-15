@@ -25,6 +25,14 @@ test("buildReviewMessages includes the original brief and generated candidate", 
   assert.match(messages[1].content, /<file path="src\/App\.jsx">ok<\/file>/);
 });
 
+test("review prompt makes the explicit brief authoritative and requires evidence-backed findings", () => {
+  const system = buildReviewMessages({ prompt: "Use one h1 and no metric cards", candidate: "candidate" })[0].content;
+
+  assert.match(system, /explicit user brief/i);
+  assert.match(system, /do not invent findings/i);
+  assert.match(system, /evidence/i);
+});
+
 test("reviewGeneratedCode normalizes a JSON-encoded findings array from an OpenAI-compatible provider", async () => {
   const model = new MockLanguageModelV2({
     doGenerate: async () => ({

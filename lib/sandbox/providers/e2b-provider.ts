@@ -9,12 +9,35 @@ type ManagedCommandHandle = {
   kill(): Promise<unknown>;
 };
 
+type E2BRunCodeResult = {
+  logs: { stdout: string[]; stderr: string[] };
+  error?: { name?: string; value?: string };
+};
+
 const MAX_CREATE_ATTEMPTS = 2;
 const CREATE_RETRY_DELAY_MS = 50;
+const MAX_TRANSIENT_OPERATION_ATTEMPTS = 2;
+const TRANSIENT_OPERATION_RETRY_DELAY_MS = 50;
 
 export function isTransientE2BProvisioningError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /fetch failed|econnreset|etimedout|eai_again|temporarily unavailable|service unavailable|\b5\d\d\b/i.test(message);
+}
+
+async function withTransientE2BRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_TRANSIENT_OPERATION_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientE2BProvisioningError(error) || attempt === MAX_TRANSIENT_OPERATION_ATTEMPTS) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, TRANSIENT_OPERATION_RETRY_DELAY_MS * attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export class E2BProvider extends SandboxProvider {
@@ -152,11 +175,11 @@ export class E2BProvider extends SandboxProvider {
 
     const fullPath = path.startsWith('/') ? path : `/home/user/app/${path}`;
     
-    const result = await this.sandbox.runCode(`
+    const result = await withTransientE2BRetry<E2BRunCodeResult>(() => this.sandbox!.runCode(`
       with open("${fullPath}", 'r') as f:
           content = f.read()
       print(content)
-    `);
+    `));
 
     if (result.error) {
       const errorName = result.error.name || 'ExecutionError';
@@ -531,6 +554,11 @@ else:
     const readiness = await waitForHttpReady({
       url,
       timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs,
+      stableSuccesses: 2,
+      isReady: async (response) => {
+        const html = await response.text();
+        return html.includes('id="root"') && html.includes('/src/main.jsx');
+      },
     });
     if (!readiness.ready) throw new Error(`Vite did not become ready: ${readiness.lastError ?? 'unknown error'}`);
   }

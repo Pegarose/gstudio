@@ -1141,6 +1141,8 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           } else if (!hasBackendFiles) {
             contextParts.push('\n🚨 USER BRIEF IS AUTHORITATIVE - FIRST GENERATION CONTRACT');
             contextParts.push('Treat the user request as the source of truth. Do not add sections, features, packages, metrics, testimonials, logos, or named people that the user did not request.');
+            contextParts.push('Do not invent fictional brand names, organizations, copyright notices, version labels, or decorative proof. Use only generic copy or facts explicitly supplied by the user.');
+            contextParts.push('Do not add inline style objects when the brief requires plain CSS; keep styling in the requested stylesheet and route every color through its tokens.');
             contextParts.push('If the user specifies an exact file count or exact file paths, treat that as a hard contract: emit exactly those files and no extra files, components, routes, or generic template sections.');
             contextParts.push('Never allow the design skill, preview example, or default app template to override an explicit file-count or content constraint in the user brief.');
             contextParts.push('Choose the smallest complete artifact that satisfies the brief. Only introduce a header, hero, feature grid, footer, or other page pattern when the brief asks for it or it is structurally necessary.');
@@ -1203,7 +1205,12 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           messages: [
             { 
               role: 'system', 
-              content: systemPrompt + `
+              // The canonical G Studio context below is authoritative. Bound
+              // the older compatibility prompt so it cannot crowd the model
+              // context and cause OmniRoute to return an empty stream.
+              content: (systemPrompt.length > 12000
+                ? `${systemPrompt.slice(0, 12000)}\n[Legacy compatibility prompt bounded before canonical context.]`
+                : systemPrompt) + `
 
 🚨 CRITICAL CODE GENERATION RULES - VIOLATION = FAILURE 🚨:
 1. NEVER truncate ANY code - ALWAYS write COMPLETE files
@@ -1558,7 +1565,8 @@ It's better to have 3 complete files than 10 incomplete files.`
             const isRetryableError = streamError.message?.includes('Service unavailable') || 
                                     streamError.message?.includes('rate limit') ||
                                     streamError.message?.includes('timeout') ||
-                                    streamError.message?.includes('Upstream request failed');
+                                    streamError.message?.includes('Upstream request failed') ||
+                                    streamError.message?.includes('empty stream');
             
             if (retryCount < maxRetries && isRetryableError) {
               retryCount++;

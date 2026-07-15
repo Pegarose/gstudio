@@ -36,3 +36,40 @@ test('readiness aborts a never-resolving fetch by the global deadline', async ()
   assert.match(result.lastError ?? '', /aborted|timed out|timeout/i);
   assert.ok(Date.now() - startedAt < 250, 'readiness should not hang after its deadline');
 });
+
+test('readiness can require consecutive healthy probes before returning', async () => {
+  let calls = 0;
+  const result = await waitForHttpReady({
+    url: 'http://sandbox.test',
+    timeoutMs: 100,
+    intervalMs: 1,
+    stableSuccesses: 2,
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response('ok', { status: 200 });
+    },
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(calls, 2);
+});
+
+test('readiness can reject a 200 placeholder until the app response is visible', async () => {
+  let calls = 0;
+  const result = await waitForHttpReady({
+    url: 'http://sandbox.test',
+    timeoutMs: 100,
+    intervalMs: 1,
+    isReady: async (response) => (await response.text()).includes('/src/main.jsx'),
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(
+        calls === 1 ? '<html><body>Sandbox Ready</body></html>' : '<html><div id="root"></div><script type="module" src="/src/main.jsx"></script></html>',
+        { status: 200 },
+      );
+    },
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(calls, 2);
+});

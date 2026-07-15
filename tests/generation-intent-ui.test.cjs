@@ -28,6 +28,7 @@ test('builder routes inspiration without the unreachable legacy brand flag', () 
   assert.match(builder, /storedGenerationIntent !== 'inspire'/);
   assert.doesNotMatch(builder, /brandExtensionMode/);
   assert.doesNotMatch(builder, /shouldAutoGenerate/);
+  assert.match(builder, /User constraints override extracted brand instructions/);
 });
 
 test('generation API uses the canonical context loader and explicit intent', () => {
@@ -59,6 +60,10 @@ test('generation stream timeout measures inactivity instead of total duration', 
   assert.doesNotMatch(route, /AbortSignal\.timeout\(providerTimeoutMs\)/);
 });
 
+test('generation retries transient empty OmniRoute streams', () => {
+  assert.match(route, /streamError\.message\?\.includes\(['"]empty stream['"]\)/);
+});
+
 test('generation uses the AI SDK v5 output-token option', () => {
   assert.match(route, /maxOutputTokens:\s*8192/);
   assert.doesNotMatch(route, /maxTokens:\s*8192/);
@@ -74,6 +79,11 @@ test('first-generation mode does not force a generic page template over the user
   assert.match(route, /exact file count or exact file paths/);
   assert.match(route, /EXPLICIT USER CONSTRAINT OVERRIDE/);
   assert.doesNotMatch(route, /Header, Hero, Features, Footer minimum/);
+});
+
+test('generation prompt blocks fictional proof and decorative chrome for constrained briefs', () => {
+  assert.match(route, /Do not invent fictional brand names, organizations, copyright notices, version labels, or decorative proof/);
+  assert.match(route, /Do not add inline style objects when the brief requires plain CSS/);
 });
 
 test('generation and edit intent routes resolve only configured OmniRoute models', () => {
