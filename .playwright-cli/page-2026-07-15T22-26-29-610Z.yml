@@ -1,0 +1,71 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - button [ref=e5] [cursor=pointer]:
+          - link "G G Studio" [ref=e7]:
+            - /url: /
+            - generic [ref=e8]: G
+            - generic [ref=e9]: G Studio
+        - button "Open project actions" [ref=e12] [cursor=pointer]:
+          - generic [ref=e13]: Active Project
+      - generic [ref=e16]:
+        - button "AI team" [ref=e17] [cursor=pointer]
+        - button "Create new sandbox" [ref=e21] [cursor=pointer]
+        - button "Re-apply last generation" [disabled] [ref=e24]
+        - button "Download your Vite app as ZIP" [disabled] [ref=e27]
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e33]:
+          - generic [ref=e34]:
+            - generic [ref=e35]: G
+            - generic [ref=e36]:
+              - generic [ref=e37]: G Studio
+              - heading "What should we build?" [level=2] [ref=e38]
+          - paragraph [ref=e39]: Give me the product, audience, and first useful flow. I’ll keep the conversation and live preview in sync.
+          - generic [ref=e40]:
+            - button "Build a focused product landing page" [ref=e41] [cursor=pointer]:
+              - generic [ref=e43]: →
+            - button "Create an operations dashboard workflow" [ref=e44] [cursor=pointer]:
+              - generic [ref=e46]: →
+            - button "Recreate a public website from its URL" [ref=e47] [cursor=pointer]:
+              - generic [ref=e49]: →
+        - generic [ref=e51]:
+          - textbox "Ask G Studio..." [ref=e52]
+          - generic [ref=e53]:
+            - generic [ref=e55]:
+              - button "Build" [ref=e56] [cursor=pointer]
+              - button "Plan" [ref=e57] [cursor=pointer]
+            - button "Send build instruction" [disabled] [ref=e58]
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - generic [ref=e64]: Project canvas
+            - generic [ref=e67]:
+              - button "Switch to code" [ref=e68] [cursor=pointer]:
+                - generic [ref=e69]: Code
+              - button "Switch to preview" [ref=e73] [cursor=pointer]:
+                - generic [ref=e74]: View
+          - button "Terminal" [expanded] [ref=e80] [cursor=pointer]:
+            - generic [ref=e81]: ›_
+        - generic [ref=e85]:
+          - generic [ref=e86]: Live canvas
+          - heading "Your product takes shape here." [level=2] [ref=e87]
+          - paragraph [ref=e88]: Describe the first useful flow in chat. G Studio will build it, preview it, and keep each revision in context.
+          - generic "Builder workflow" [ref=e89]:
+            - generic [ref=e90]: Describe
+            - generic [ref=e91]: →
+            - generic [ref=e92]: Build
+            - generic [ref=e93]: →
+            - generic [ref=e94]: Refine
+      - complementary "Builder workspace details" [ref=e96]:
+        - generic [ref=e97]:
+          - generic [ref=e98]:
+            - generic [ref=e99]: Workspace details
+            - strong [ref=e100]: Ready
+          - button "Close workspace details" [ref=e101] [cursor=pointer]: ×
+        - tablist "Workspace detail tabs" [ref=e102]:
+          - tab "Terminal" [ref=e103] [cursor=pointer]
+          - tab "Brand" [active] [selected] [ref=e104] [cursor=pointer]
+        - paragraph [ref=e109]: Brand guidance appears here after a visual reference is analyzed.
+  - alert [ref=e95]

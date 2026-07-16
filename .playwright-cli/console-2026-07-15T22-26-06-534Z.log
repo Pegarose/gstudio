@@ -1,0 +1,4 @@
+[    1237ms] [LOG] [home] Cleared old conversation data on mount @ http://localhost:9010/_next/static/chunks/app/generation/page-0589e4432d1cdc2a.js:0
+[    1238ms] [LOG] [home] No project context; waiting for first prompt @ http://localhost:9010/_next/static/chunks/app/generation/page-0589e4432d1cdc2a.js:0
+[    1245ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9010/api/sandbox-status:0
+[    1246ms] [LOG] [checkSandboxStatus] No existing sandboxData, clearing state @ http://localhost:9010/_next/static/chunks/app/generation/page-0589e4432d1cdc2a.js:0
